@@ -6,7 +6,7 @@
 
 ## 1) Architecture Diagram
 
-```mermaid
+```
 flowchart LR
   subgraph Clients
     ADMIN[Admin UI]:::client
