@@ -1,52 +1,52 @@
-# SystemDesign.md — tg-miniapp-payhub-service
+# SystemDesign.md — **tg-miniapp-payhub-service**
+*Version:* v0.1.0  
+*Last Updated:* 2025-09-24 01:03 +07  
+*Owner:* Platform Engineering — Ledger & Custody
 
-> High‑level architectural blueprint for the **Payhub** service — the platform’s bank/ledger of record. This document is scoped to Payhub while ensuring clean interoperability with sibling repos (Identity, PlayHub/CFB, Campaigns, Escrow, Funding, Discovery, Events, WebApp, Admin, Workers, Config, Infra, Shared).
+> **What it is:** The high‑level architectural blueprint for **Payhub**, the platform’s **bank/ledger of record**. Payhub exposes safe, idempotent primitives—**holds**, **settlements**, **conversions**, **deposits/withdrawals**—consumed by PlayHub/CFB, Escrow, Campaigns, and Funding. It never contains game/business rules; it guarantees **money correctness** across all repos.
 
 ---
 
-## 1) Architecture Diagram
-
-```
+## 1) Architecture Diagram (High‑Level)
+```mermaid
 flowchart LR
   subgraph Clients
     ADMIN[Admin UI]:::client
     WORKERS[Workers]:::client
-    SVC_PLAYHUB[PlayHub/CFB]:::peer
-    SVC_ESCROW[Escrow]:::peer
-    SVC_CAMPAIGNS[Campaigns]:::peer
-    SVC_FUNDING[Funding]:::peer
+  end
+
+  subgraph Callers
+    PLAYHUB[PlayHub/CFB]:::peer
+    ESCROW[Escrow]:::peer
+    CAMPAIGNS[Campaigns]:::peer
+    FUNDING[Funding]:::peer
   end
 
   subgraph Payhub["tg-miniapp-payhub-service"]
-    API[/Internal REST API\n/healthz, /readyz/]:::svc
-    HOLD[Holds Engine]:::logic
+    API[/Internal REST API\n/healthz /readyz/]:::svc
+    HOLDS[Holds Engine]:::logic
     SETTLE[Settlement Engine]:::logic
-    CONVERT[Conversion Engine]:::logic
-    LEDGER[(MongoDB: wallets, ledger, holds, settlements, conversions, withdrawals)]:::db
-    CACHE[(Redis: idempotency, locks, queues)]:::cache
-    QUEUES[Queues (BullMQ)]:::queue
-    RULES[Limits & Fees\n(config hot‑reload)]:::edge
+    FX[Conversion Engine]:::logic
+    LEDGER[(MongoDB\nwallets, ledger, holds, settlements, fx, wd/deposits)]:::db
+    CACHE[(Redis\nidempotency, locks, rate limits)]:::cache
+    RULES[Limits/Fees\n(config hot‑reload)]:::edge
   end
 
-  EXT_PRICE[Price/FX Source\n(Price Service / Static Rates)]:::ext
-  EXT_CUST[Future: On‑chain Custody Adapter]:::ext
-  EXT_FIAT[Future: Fiat On‑/Off‑ramp]:::ext
+  PRICE[[Price Service\n(or static rates)]]:::ext
 
-  SVC_PLAYHUB -->|/internal/v1/holds, /settlements| API
-  SVC_ESCROW -->|/internal/*| API
-  SVC_CAMPAIGNS -->|rewards.mint via settlements| API
-  SVC_FUNDING -->|intents: hold/settle| API
-  ADMIN -->|read-only ledger, limited admin ops| API
-  WORKERS -->|recon, DLQ replays| API
-  API --> HOLD --> LEDGER
+  PLAYHUB -->|/internal/v1/*| API
+  ESCROW -->|/internal/v1/*| API
+  CAMPAIGNS -->|/internal/v1/*| API
+  FUNDING -->|/internal/v1/*| API
+  ADMIN -->|read-only + ops| API
+  WORKERS -->|recon + DLQ| API
+
+  API --> HOLDS --> LEDGER
   API --> SETTLE --> LEDGER
-  API --> CONVERT --> LEDGER
-  RULES --> API
+  API --> FX --> LEDGER
   API --> CACHE
-  QUEUES --> API
-  EXT_PRICE --> CONVERT
-  EXT_CUST -.-> API
-  EXT_FIAT -.-> API
+  RULES --> API
+  PRICE --> FX
 
   classDef client fill:#E3F2FD,stroke:#1E88E5;
   classDef peer fill:#ECEFF1,stroke:#546E7A;
@@ -54,203 +54,145 @@ flowchart LR
   classDef logic fill:#F1F8E9,stroke:#7CB342;
   classDef db fill:#FFF3E0,stroke:#FB8C00;
   classDef cache fill:#F3E5F5,stroke:#8E24AA;
-  classDef queue fill:#FFEBEE,stroke:#E53935;
   classDef edge fill:#FFFDE7,stroke:#FBC02D;
-  classDef ext fill:#FFFDE7,stroke:#FBC02D,stroke-dasharray: 5 5;
+  classDef ext fill:#FFFDE7,stroke:#FBC02D,stroke-dasharray:5 5;
 ```
-*Notes:* Payhub is **internal‑only**; it exposes primitives (holds, settlements, conversions, deposits, withdrawals) and never implements domain/game logic.
+*Inter‑repo fit:* Identity issues end‑user tokens (not accepted here). Callers authenticate with **service JWTs** against Payhub’s allow‑list. Price Service optionally supplies rates for conversions.
 
 ---
 
 ## 2) Technology Stack
+| Layer | Choice | Why |
+|---|---|---|
+| Runtime | Node.js ≥20 + TypeScript | Shared tooling across repos |
+| Framework | Express + Zod | Small, predictable, schema‑first validation |
+| DB | **MongoDB** | Append‑only ledger + flexible wallet/hold docs |
+| Cache/Queue | **Redis** (+ BullMQ in Workers) | Idempotency, locks, async recon |
+| Auth | `jose` (Ed25519 service JWT) | Fast verify, compact keys |
+| Telemetry | OpenTelemetry + Pino | Consistent traces/metrics/logs |
+| Config | **tg-miniapp-config** (signed JSON) | Fees/limits/currency enablement, hot‑reload |
+| Deploy | Docker + Helm (infra repo) | Reproducible pipelines |
 
-| Layer | Choice | Rationale |
-|------|--------|-----------|
-| Runtime | Node.js ≥20, TypeScript | Shared ecosystem and tooling with other services |
-| Framework | Express + Zod | Minimal, predictable validation |
-| Database | MongoDB | Append‑only ledger, document models for holds/settlements |
-| Cache/Queues | Redis + BullMQ | Idempotency store, locks, async recon jobs |
-| Crypto | Ed25519 JWT via `jose` | Service‑to‑service auth; small keys, fast verify |
-| Telemetry | OpenTelemetry + Pino | Unified tracing/metrics/logs |
-| Config | tg-miniapp-config | Signed, hot‑reloaded rates/limits/fees |
-| Deploy | Docker + Helm (infra repo) | Standardized CI/CD |
-
-Currencies (configurable per env): **STAR, FZ, PT, FUZE, USDT**.
-
----
-
-## 3) Responsibilities & Interfaces
-
-### Responsibilities (SoR)
-- **Wallet Balances** per user & currency (available = non‑held funds).
-- **Ledger Entries** immutable, double‑entry style.
-- **Holds** create escrowed amounts with lifecycle `held → released|settled`.
-- **Settlements** consume a hold as `win|loss` and apply credits/debits.
-- **Conversions** between currencies using rate snapshots and fees.
-- **Deposits / Withdrawals** (off‑chain MVP) with status tracking.
-- **Rewards** issuance for campaigns via settlement primitives.
-
-### Internal API (MVP)
-All endpoints require service JWT; mutations require `Idempotency-Key`.
-
-- `GET  /internal/v1/wallets/:userId/balances`
-- `POST /internal/v1/holds` → `{ holdId }`
-- `POST /internal/v1/holds/release` → release back to available
-- `POST /internal/v1/settlements` → apply `win|loss` and finalize hold
-- `POST /internal/v1/conversions` → convert `from→to` with snapshot+fee
-- `POST /internal/v1/withdrawals` / `POST /internal/v1/deposits/credit`
-
-Headers: `Authorization: Bearer <svc-jwt>`, `Idempotency-Key`, `X-Request-Id`.
+**Currencies (MVP):** STAR, FZ, PT, FUZE, USDT (config‑gated). All amounts are **integers of smallest units** (no floats).
 
 ---
 
-## 4) Data Model
+## 3) Data Flow (How data moves)
+### 3.1 Hold → Settle (used by PlayHub, Escrow, Funding)
+1. **Caller** → `POST /internal/v1/holds` `{ userId, currency, amount, reason, reference }` + `Idempotency-Key`  
+2. **Payhub** checks available balance; moves funds to **held** via ledger entries; returns `{ holdId }`.  
+3. Later **caller** → `POST /internal/v1/settlements` `{ holdId, outcome: 'win'|'loss', payout? }`  
+   - **win**: credit `payout.amount` to winner user; mark hold settled.  
+   - **loss**: forfeit held amount; mark hold settled.  
+4. **Idempotency** guarantees the same receipt on retries; unique constraints prevent double‑spend.
 
-- **WalletBalance** `{ userId, currency, available:int, updatedAt }` (unique by `userId+currency`)
-- **Hold** `{ holdId, userId, currency, amount:int, reason, reference, status:held|released|settled, createdAt }`
-- **Settlement** `{ settlementId, holdId, outcome:win|loss, payout?{currency,amount}, createdAt }` (unique by `holdId`)
-- **LedgerEntry** `{ entryId, userId, currency, amount:int, type:debit|credit, reason, refId, createdAt }`
-- **Conversion** `{ conversionId, userId, from, to, fromAmount, toAmount, fee, rateSnapshotId, createdAt }`
-- **Withdrawal** `{ withdrawalId, userId, currency, amount, dest, status, createdAt }`
+### 3.2 CFB v1 Settlement (from PlayHub)
+- PlayHub computes winners and **payout totals** (after rake).  
+- For **each** participant hold: settle with `win|loss`.  
+- Ledger guarantees invariant: `Σcredits − Σdebits = Σbalances + ΣactiveHolds`.
 
-**Invariants**
-- For each currency: `Σ(credits) - Σ(debits) = Σ(balances) + Σ(active holds)`
-- A **hold** is single‑use and transitions exactly once to a terminal state.
+### 3.3 Conversion (FX)
+1. **Caller** → `POST /internal/v1/conversions` `{ userId, from, to, amount, rateSnapshotId, feeBps }`.  
+2. **Payhub** debits `from`, credits `to = floor(amount * rate * (1 − fee))`; persists snapshot reference.  
+3. **Rates** from Price Service or static table; conversions can be **disabled** via config on oracle outage.
 
-Indexes: `WalletBalance(userId,currency)` unique; `Hold(holdId)` unique; time‑ordered compound indexes for queries.
+### 3.4 Deposits & Withdrawals (Off‑chain MVP)
+- **Deposit credit**: admin/worker credits user from **treasury** user account.  
+- **Withdraw**: create hold → perform off‑chain payout → settle **loss** to consume hold; on payout failure, **release** the hold.
 
----
-
-## 5) Data Flow
-
-### 5.1 Hold → Settle (PlayHub/CFB, Escrow, Funding)
-1. Caller → `POST /internal/v1/holds { userId, currency, amount, reason, reference, idempotencyKey }`
-2. Payhub verifies sufficient **available** balance; moves `amount` to **held** (by ledger entries) and returns `holdId`.
-3. Later, caller → `POST /internal/v1/settlements { holdId, outcome, payout? }`.
-
-   - **win**: credit `payout.amount` to `userId` (usually equals total pot for winners in PlayHub), mark hold **settled**.
-
-   - **loss**: debit **held** amount (forfeit) from `userId`, mark hold **settled**.
-
-4. Idempotency returns the same receipt on duplicate requests.
-
-### 5.2 Conversion
-1. Caller → `POST /internal/v1/conversions { userId, from, to, amount, rateSnapshotId, feeBps }`
-2. Payhub debits `from`, credits `toAmount = floor(amount*rate*(1-feeBps/10_000))`, writes conversion + ledger entries.
-
-### 5.3 Deposit/Withdraw (off‑chain MVP)
-- **Deposit credit**: system treasury → user wallet credit (admin/worker invoked).
-- **Withdraw**: place hold, perform off‑chain payout, then settle **loss** to consume hold; on failure, release hold.
-
-### 5.4 Reconciliation (Workers)
-- Periodic job scans **orphan holds** older than TTL with no correlation → releases.
-- Ledger invariant check emits alerts on mismatch.
+### 3.5 Reconciliation (Workers)
+- Orphan hold GC (older than TTL) → `release`.  
+- Invariant checker → emits alerts on mismatch.  
+- DLQ replays for partially completed mutations.
 
 ---
 
-## 6) Security Plan
+## 4) Scalability & Security Plan
+### 4.1 Scalability & Reliability
+- Stateless API pods; horizontal scale behind ingress.  
+- MongoDB tuned indexes: `wallet(userId,currency)` unique; `holds(holdId)`; `ledger(userId,currency,createdAt)`.  
+- Redis cluster for idempotency/locks; backpressure with 429 & queues.  
+- **SLOs:** p95 < 100ms on reads, < 300ms on mutations; 99.95% availability.  
+- Blue/green deploys; health checks `/healthz`, `/readyz` include DB/Redis/config readiness.  
+- DR: daily backups; **PITR** recommended; config switch for “read‑only” mode on emergencies.
 
-- **Service JWT** (Ed25519) with audience & issuer allow‑lists; optional mTLS inside cluster.
-- **Idempotency**: every mutation requires `Idempotency-Key` (UUID); canonical response cached 48h.
-- **Input Validation**: Zod schemas; integer amounts (smallest units), no floats.
-- **Authorization**: only trusted services can call internal APIs; Admin has read‑only by default.
-- **Auditability**: append‑only ledger; every state change has correlation IDs (roomId/betId/escrowId/fundingIntent).
-- **Secrets**: managed via secret manager; no secrets committed.
-- **Rate Limits**: per‑issuer rate limits and spike protection on holds/settlements.
-- **DoS/Backpressure**: bounded concurrency; queue overflow to Workers for retries.
-
----
-
-## 7) Scalability & Reliability
-
-- **Stateless** API pods; horizontal scale behind a service mesh/ingress.
-- **MongoDB** with write concern `majority`; tuned indexes for hot paths.
-- **Redis** cluster for idempotency & queues; BullMQ with DLQ for failed jobs.
-- **SLOs**: 99.95% availability; p95 < 100ms for `GET balances`, < 300ms for mutations.
-- **Health**: `/healthz`, `/readyz` verify DB/Redis connectivity and config freshness.
-- **Deployments**: Blue/green via Helm; zero‑downtime rolling updates.
-- **DR**: backups + PITR; ability to freeze conversions via config on provider outage.
+### 4.2 Security
+- **Service‑to‑service JWT** (Ed25519); strict issuer/audience allow‑lists; optional mTLS.  
+- **Idempotency required** on all POST/PUT/PATCH; Redis‑backed with 48h retention.  
+- **Input validation** with Zod; integer amounts only; currency allow‑list from config.  
+- **Authorization**: no end‑user tokens; only trusted services & restricted admin ops.  
+- **Auditability**: append‑only ledger; correlation IDs (roomId/betId/escrowId).  
+- **Secrets** in secret manager; rotated keys; least‑privilege DB roles.  
+- **Rate limits** per issuer; anomaly detection for velocity spikes.  
+- **Compliance**: privacy‑by‑design (no PII beyond userId); export ledgers for audits.
 
 ---
 
-## 8) Observability
-
-- **Tracing**: propagate `X-Request-Id`; spans include `userId`, `holdId`, `settlementId`.
-- **Metrics**: holds/sec, settlements/sec, idempotency hit rate, invariant check status, p95 latencies.
-- **Logs**: structured JSON; redact PII; include correlation fields.
-- **Alerts**: orphan holds > threshold, settlement error rate spike, ledger mismatch, provider/rates stale.
-
----
-
-## 9) Configuration & ENV
-
-Pulled via **tg-miniapp-config** (hot‑reload ≤60s):
-- **Fees**: conversion fee BPS per pair
-- **Limits**: daily withdrawal caps, conversion count caps
-- **Currencies Enabled**
-- **Rate Source**: `oracle` (price service) or static
-
-Key ENV (service):
-- `SERVICE_JWKS_URL` (trusted issuers), `TRUSTED_ISSUERS`
-- `MONGO_URL`, `REDIS_URL`
-- `RATES_SOURCE`, `RECON_ORPHAN_HOLDS_MINUTES`
-
----
-
-## 10) Failure & Recovery Scenarios
-
-- **Idempotency cache loss**: duplicate POSTs could replay → protect by unique constraints and request hash comparisons.
-- **Rates outage**: refuse conversions; keep ledger primitives operational.
-- **Partial settlement**: network error after ledger write → idempotency returns completed result; DLQ worker reconciles.
-- **Mongo or Redis outage**: 503 with circuit‑breaker; Workers pause; Admin alerted.
-
----
-
-## 11) User Stories & Feature List (Service‑centric)
-
+## 5) User Stories & Feature List (Service‑centric)
 ### Feature List
-- Create/release/settle holds
-- Credit/debit via settlements (win/loss patterns)
-- Currency conversions with fees and snapshots
-- Off‑chain deposits/withdrawals tracking
-- Read balances & ledger with pagination
-- Reconciliation & orphan hold GC
+- Create/release **Holds** (escrow funds).  
+- **Settlements** with outcomes `win|loss`.  
+- **Conversions** with fees and rate snapshots.  
+- **Deposits/Withdrawals** (off‑chain MVP) with statuses.  
+- **Balances & Ledger** read APIs.  
+- **Reconciliation** jobs & orphan hold GC.
 
 ### User Stories
-- *As PlayHub*, I need to place holds before matchmaking so that funds are guaranteed at settle time.
-- *As PlayHub/CFB*, I need to settle winner and loser holds atomically so that payouts are correct.
-- *As Campaigns*, I want to mint rewards via a settlement so that claims are idempotent and auditable.
-- *As Escrow*, I need dual holds and controlled release so that P2P trades are safe.
-- *As Funding*, I want payment intents to reserve funds and settle after confirmation so that oversell cannot occur.
-- *As Admin/Finance*, I need read‑only ledgers and invariant checks so that I can audit and reconcile.
+- *As PlayHub*, I place holds before a match so funds are guaranteed when settling the winner and loser.  
+- *As CFB (PlayHub)*, I settle each participant’s hold with win/loss to distribute the pot correctly after rake.  
+- *As Escrow*, I need dual holds and atomic release/forfeit so OTC trades are safe.  
+- *As Campaigns*, I mint rewards via a settlement so claims are idempotent and auditable.  
+- *As Finance/Admin*, I need read‑only ledger exports and invariant checks for audits.
 
 ---
 
-## 12) Compatibility Notes (Cross‑Repo)
+## 6) Interfaces (for interoperability)
+**Authentication:** `Authorization: Bearer <service-jwt>` (no user tokens).  
+**Headers:** `Idempotency-Key`, `X-Request-Id`.  
 
-- **Identity**: callers authenticate with service JWTs; no end‑user tokens accepted directly.
-- **PlayHub/CFB**: uses holds & settlements; payout currency must match hold currency (MVP).
-- **Campaigns**: rewards implemented as settlements from a campaign treasury user → claimant.
-- **Escrow**: two holds (maker/taker) settled according to dispute/completion outcome.
-- **Funding**: intents use holds and settle on confirmation; expiry releases.
-- **Workers**: run `orphan_holds.gc`, DLQ replays, and periodic invariant checks.
-- **Config**: controls fees/limits/currency enablement; changes hot‑reload safely.
-- **Infra**: Helm chart probes/requests; OTel collector integrated.
+**Endpoints (MVP)**  
+- `GET  /internal/v1/wallets/:userId/balances`  
+- `POST /internal/v1/holds` → `{{ holdId }}`  
+- `POST /internal/v1/holds/release`  
+- `POST /internal/v1/settlements`  
+- `POST /internal/v1/conversions`  
+- `POST /internal/v1/withdrawals` / `POST /internal/v1/deposits/credit`
 
----
-
-## 13) Non‑Functional Requirements
-
-- 85%+ test coverage on holds/settlements; 100% on idempotency core.
-- Deterministic integer math; no floating point in balances/ledger.
-- Throughput: sustain ≥ 300 holds/sec and ≥ 300 settlements/sec at p95 < 300ms under nominal load.
-- Strong consistency for ledger writes; read‑your‑writes for balance queries of same user.
+**Contracts:** DTOs and error envelopes provided by `tg-miniapp-shared`. Config (fees/limits/currencies) from `tg-miniapp-config` with hot‑reload ≤60s.
 
 ---
 
-## 14) Roadmap
+## 7) Data Model (canonical)
+- **WalletBalance**: `{ userId, currency, available:int, updatedAt }`  
+- **Hold**: `{ holdId, userId, currency, amount:int, reason, reference, status:held|released|settled, createdAt }`  
+- **Settlement**: `{ settlementId, holdId, outcome, payout?{currency,amount}, createdAt }` (1:1 with hold)  
+- **LedgerEntry**: `{ entryId, userId, currency, amount:int, type:debit|credit, reason, refId, createdAt }`  
+- **Conversion**: `{ conversionId, userId, from, to, fromAmount, toAmount, fee, rateSnapshotId, createdAt }`  
+- **Withdrawal/Deposit**: standard state machines (`pending→processing→succeeded|failed`).
 
-- Bulk settlements endpoint for batch payouts
-- On‑chain custody adapter (EVM vaults) behind `CustodyAdapter`
-- Ledger snapshots & time‑travel queries
-- Advanced fraud/velocity rules and anomaly detection
+**Invariants:** for each currency & time window:  
+`Σcredits − Σdebits == Σbalances + ΣactiveHolds`
+
+---
+
+## 8) Failure Modes & Recovery
+- **Idempotency cache loss** → rely on unique constraints & request hashes; replays return same receipt.  
+- **Rates/Price outage** → conversions disabled; core ledger stays operational.  
+- **Partial commit then network error** → subsequent retry returns committed result (idempotent).  
+- **DB/Redis outage** → 503 with circuit‑breaker; Workers pause queues; alerting escalates.  
+
+---
+
+## 9) Implementation Notes
+- Integer math utilities (BigInt or fixed‑point lib only for parsing; store integers).  
+- Deterministic rounding for FX; document policy in `CHANGELOG`.  
+- Pagination & time‑range filters for ledger reads.  
+- Consistent correlation IDs across services for end‑to‑end traceability.
+
+---
+
+## 10) Roadmap
+- Batch settlements API (bulk payouts).  
+- On‑chain custody adapters behind `CustodyAdapter` interface.  
+- Ledger snapshots/time‑travel queries.  
+- Velocity/fraud heuristics for withdrawals.  
