@@ -1,236 +1,227 @@
-# UserStories.md — **tg-miniapp-payhub-service**
-*Generated:* 2025-09-25 13:08 +07  
-*Source:* SystemDesign.md (Payhub Service) and *From Vision to Value: A Guide to User Stories and Feature Lists*
+# UserStories.md
 
-> This document enumerates comprehensive **User Stories** for the **Payhub** (custody & ledger) domain. Stories follow INVEST and include acceptance criteria, edge cases, dependencies, and non‑functional notes. Scope aligns with the platform architecture: **off‑chain balances** for STAR/FZ/PT in MVP; server‑to‑server **holds & settlements** for PlayHub/CFB/Funding/Escrow; user‑initiated **deposit/withdraw/convert**; fees and treasury routing; auditing and reconciliation.
-
----
-
-## 1) Personas
-- **End User** — Anyone using WebApp; maintains balances in STAR/FZ/PT; requests withdrawals and conversions.
-- **Game Player** — A user who stakes assets via PlayHub (matchmaking or **CFB v1**).
-- **Presale Participant** — Uses Funding service; purchases using on‑platform assets.
-- **Counterparty (Escrow)** — Buyer/Seller in P2P/OTC; funds are held/released via Escrow service.
-- **Campaign Beneficiary** — Receives rewards/airdrops credited by Campaigns service.
-- **Staff Finance Operator** — Approves withdrawals, performs manual credits, reconciles accounts.
-- **Service Client** — Trusted services: PlayHub, Funding, Escrow, Campaigns, Workers, Admin BFF.
-- **Workers** — Async processors for payouts, reconciliation, ledgers export.
+Repo: tg-miniapp-payhub-service
+print: 
+SHA-256: d2281b6f3c7fb2270729fa2b8de0a433803051db2aea2c4573a8b277f618fd53
+Bytes: 15566
 
 ---
 
-## 2) Feature List (Payhub Scope)
-1. **Balances & Ledger** — Per‑user accounts for STAR, FZ, PT; immutable journal entries; balance snapshots.
-2. **Holds & Settlements (S2S)** — Create/cancel/settle holds for bets, purchases, escrows.
-3. **Deposits** — Manual/admin credit (MVP) and on‑ramp webhook (future).
-4. **Withdrawals** — User requests; two‑person approvals in Admin; payout execution by Workers.
-5. **Conversions** — User converts between STAR/FZ/PT; config‑driven rates and fees.
-6. **Rewards & Adjustments** — Service‑initiated credits for campaigns, refunds, compensation.
-7. **Fees & Treasury** — Platform rake/fees routing to treasury accounts; CFB rake (7%) configurable.
-8. **Statements & Exports** — User statements; admin exports for audits/reconciliation.
-9. **Limits, Risk & Compliance** — Per‑user limits, velocity checks, blacklists via Config.
-10. **Observability & Reconciliation** — Metrics, logs, traces; nightly valuation reports using Price Service.
-11. **Idempotency & Integrity** — Idempotent POSTs; request hashing; double‑entry guarantees.
+## 1) Epics → Features → User Stories
+
+> **Traceability note:** Stories reference the uploaded **SystemDesign.md** for this repo (e.g., “§4 Data Model”, “§5 Interfaces”, “§6 Flows”, “§7 Security”, “§8 Reliability”). Section numbers follow your document for Payhub.
+
+### Epic A — Wallets & Ledger (STAR/FZ/PT, USDT later-ready)
+Accounts, balances, holds, settlements, and double-entry ledger entries.  
+**Traceability:** §3 Scope, §4 Data Model (Wallet, LedgerEntry, Hold, Settlement), §6.1 Hold→Settle Flow, §7 Security.
+
+#### Feature A1 — Internal Wallet Creation & Fetch
+**Story:** As a **logged-in user**, I want an internal wallet automatically provisioned for supported assets (STAR/FZ/PT), so that I can deposit, hold, convert, and settle funds.  
+**Acceptance Criteria (GWT):**
+1. **Given** a first successful login/session, **when** Payhub receives a `POST /internal/v1/wallets/provision` from Identity/Workers, **then** Wallets for STAR/FZ/PT are created if absent, idempotently.  
+2. **Given** I am logged in, **when** WebApp calls `GET /v1/wallets`, **then** I see per-asset balances: `available`, `onHold`, `total`.  
+3. **Given** the wallet exists, **when** the same provision call is retried with the same `Idempotency-Key`, **then** Payhub returns **200** and no duplicates.  
+**Non‑Happy Paths & Errors:** invalid auth; unsupported asset; DB unavailability (503).  
+**Permissions & Roles:** user (self), staff (read via Admin), services (internal only).  
+**Data Touchpoints:** `Wallet` upsert; `User` (foreign key).  
+**Cross‑Service Interactions:** Identity (provision trigger), Workers (repair jobs).  
+**State & Lifecycle:** wallet: `active` → `archived` (rare).  
+**Security & Compliance:** JWT verify, PII minimal.  
+**Observability:** `wallet_provision_ok/fail`, dashboard by asset.  
+**Performance:** p95 list < 100 ms; pagination if > 20 assets.  
+**Edge Cases:** user has zeroed balances; partial asset rollout.
+
+#### Feature A2 — Double‑Entry Ledger & Balance Integrity
+**Story:** As a **platform operator**, I want every money movement to be represented as balanced ledger entries, so that balances are consistent and auditable.  
+**Acceptance Criteria:**
+1. **Given** any balance change (deposit, hold, settle, convert, payout, fee), **when** it is committed, **then** Payhub writes **two** `LedgerEntry` rows (debit/credit) with the same `journalId` and `requestId`.  
+2. **Given** a ledger journal, **when** summed by account and asset, **then** the delta equals the visible balance change.  
+3. **Given** a transient failure mid‑write, **when** Workers replay by `Idempotency-Key`, **then** exactly‑once semantics apply—no duplicate entries.  
+**Errors:** foreign key miss; asset mismatch; negative resulting balance rejected (except hold release).  
+**State & Lifecycle:** `LedgerEntry.status`: `pending` → `posted` → `voided` (reversals).  
+**Observability:** mismatch detector job; metric `ledger_post_fail` with alert.  
+**Traceability:** §4 (Ledger model), §6 (flows), §8 (reliability).
+
+### Epic B — Holds & Settlements (Matchmaking, Funding, Escrow)
+Create monetary reservations (holds) and finalize via settlement outcomes.  
+**Traceability:** §5 Interfaces `/internal/v1/holds`, `/internal/v1/settlements`, §6.1 Hold→Settle.
+
+#### Feature B1 — Create Hold
+**Story:** As **PlayHub** or **Funding**, I want to reserve a bet or purchase amount, so that funds are guaranteed before gameplay or order placement.  
+**Acceptance Criteria:**
+1. **Given** a valid service JWT and payload `{{userId, asset, amount, reason, idemKey}}`, **when** caller posts `POST /internal/v1/holds`, **then** Payhub verifies `available ≥ amount`, debits `available`, credits `onHold`, and returns `{{holdId, status: active}}`.  
+2. **Given** insufficient funds, **when** the call is made, **then** Payhub returns **409 conflict** `{{code: insufficient_funds}}` and does **not** create a hold.  
+3. **Given** a repeated request with the same `idemKey`, **when** retried, **then** the same `holdId` and state are returned (idempotent).  
+4. **Given** an unsupported asset, **then** Payhub returns **400 bad_request**.  
+**Permissions:** internal services only (PlayHub, Funding, Escrow) by allowlist audience.  
+**Data Touchpoints:** `Hold` create; ledger `reserve` journal; `Wallet` balances.  
+**Observability:** metrics per caller; 95p latency < 80 ms.  
+**Edge Cases:** concurrent holds racing on same wallet; stale balance cache invalidated.
+
+#### Feature B2 — Settle Hold (Win/Loss/Cancel/Partial)
+**Story:** As **PlayHub** (or Funding/Escrow), I want to finalize a hold with an outcome, so that the wallet reflects the final result.  
+**Acceptance Criteria:**
+1. **Given** an active hold, **when** `POST /internal/v1/settlements` with `{{holdId, outcome: "win" | "loss" | "cancel" | "partial", amount?, fees?}}` arrives, **then** Payhub posts balanced ledger entries:  
+   - **win**: move loser’s hold to winner’s available; apply rake/fees; close both holds.  
+   - **loss**: forfeit owner’s hold to treasury/winner per context; close hold.  
+   - **cancel**: release back to owner’s available.  
+   - **partial**: proportionally release/forfeit `amount`.  
+2. **Given** settlement already applied, **when** retried with the same `idemKey`, **then** response is idempotent with the final state.  
+3. **Given** invalid outcome vs state (e.g., cancelled hold), **then** **409 conflict** returned.  
+**Permissions:** internal only; audience must match expected caller (e.g., PlayHub for game holds).  
+**Cross‑Service:** emits `wallet.settled` event (Workers fan‑out notifications, WebApp refresh).  
+**State:** `Hold.status`: `active` → `settled|cancelled|partially_settled`.  
+**Observability:** settlement latency and failure alerts.  
+**Traceability:** §6.1 Match settle; §5.2 Internal APIs.
+
+### Epic C — Deposits & Withdrawals (Custody)
+MVP focuses on STAR/FZ/PT off‑chain custody; USDT added later.  
+**Traceability:** §5 Public APIs `/v1/deposits`, `/v1/withdrawals`, §7 Security.
+
+#### Feature C1 — Deposit (Admin Mint or Earned Rewards)
+**Story:** As a **user**, I want to receive STAR/FZ/PT into my wallet from rewards, conversions, or administrative grants, so that I can play and participate.  
+**Acceptance Criteria:**
+1. **Given** a staff action or reward event, **when** Workers post `POST /internal/v1/deposits` with `{{userId, asset, amount, source, idemKey}}`, **then** the user’s `available` increases and a ledger journal is posted.  
+2. **Given** a duplicate `idemKey`, **when** retried, **then** response is idempotent.  
+3. **Given** negative or zero amount, **then** **400** returned.  
+**Permissions:** internal (Workers, Admin BFF), not public.  
+**Observability:** deposit counts by source; audit trail for staff grants.  
+**Security:** capability `finance.deposit` required.
+
+#### Feature C2 — Withdraw (Optional gated / future on‑chain)
+**Story:** As a **user**, I want to withdraw STAR/FZ/PT (policy‑gated), so that I can cash out or transfer (future).  
+**Acceptance Criteria:**
+1. **Given** configured withdrawal policy in **tg‑miniapp‑config**, **when** I submit `POST /v1/withdrawals` with KYC‑compliant info, **then** request enters `pending_review` (MVP may disable external withdrawals).  
+2. **Given** staff approval via Admin, **when** status becomes `approved`, **then** Workers execute movement (off‑platform transfer or voucher) and mark `completed`.  
+3. **Given** insufficient available balance, **then** **409 insufficient_funds**.  
+**State:** `pending_review` → `approved|rejected` → `completed|failed`.  
+**Traceability:** §3 Scope (custody), §5 Public API.
+
+### Epic D — Conversions (STAR↔FZ↔PT, rate via Price Service/config)
+**Traceability:** §5 Interfaces `/v1/conversions`, §6 Flows, §11 Config (fees).
+
+#### Feature D1 — Fixed‑Rate Conversion
+**Story:** As a **user**, I want to convert between STAR/FZ/PT at configured rates, so that I can fund a specific game or product.  
+**Acceptance Criteria:**
+1. **Given** a valid `POST /v1/conversions` `{{fromAsset, toAsset, amountFrom, idemKey}}`, **when** the rate is fetched from Config/Price Service, **then** Payhub debits `fromAsset.available`, credits `toAsset.available`, and records fees (if any).  
+2. **Given** cross‑asset not allowed in config, **then** **403 forbidden**.  
+3. **Given** balance insufficient, **then** **409 conflict**.  
+4. **Given** a retry with same `idemKey`, **then** response repeats the same `conversionId`.  
+**Data:** ledger entries with `type=conversion`, `fxRate`.  
+**Observability:** conversion histogram; fee revenue metrics.
+
+### Epic E — Fees, Treasury & Revenue Share
+Rake on wins, conversion fee, withdrawal fee; treasury accounting.  
+**Traceability:** §4 Data Model (FeeSchedule), §6 Settlement, §11 Config.
+
+#### Feature E1 — Apply Rake/Fees
+**Story:** As the **platform**, I want fees to be automatically applied per config, so that revenue is captured consistently.  
+**Acceptance Criteria:**
+1. **Given** a settlement **win**, **when** config says rake 7%, **then** Payhub moves 7% to treasury account and 93% to winner.  
+2. **Given** a conversion or withdrawal, **when** fee rules are active, **then** ledger journals include fee lines to treasury.  
+3. **Given** fee calculation rounding, **then** results use integer math and round in favor of treasury as configured.  
+**Observability:** fee accrual vs realized; daily revenue report job.  
+**Security:** fee schedules from signed config only.
+
+### Epic F — Admin & Reporting
+**Traceability:** §5 Admin endpoints, §9 Observability.
+
+#### Feature F1 — Wallet Search & Ledger Explorer
+**Story:** As **staff (finance)**, I want to search wallets and inspect ledger journals, so that I can investigate disputes.  
+**Acceptance Criteria:**
+1. **Given** capability `finance.read`, **when** Admin BFF calls `GET /internal/v1/wallets?query=...`, **then** paginated wallets return with balances.  
+2. **Given** a specific `journalId`, **when** Admin fetches `GET /internal/v1/ledger/:journalId`, **then** both sides of the journal and metadata are returned.  
+3. **Given** export requested for a time range, **then** CSV streaming starts with backpressure.  
+**Observability:** slow query alert; audit for staff views over threshold.
+
+### Epic G — Reliability & Repair Jobs (Workers)
+**Traceability:** §8 Reliability, §9 Observability.
+
+#### Feature G1 — Idempotent Retry & Ledger Repair
+**Story:** As a **worker**, I want to safely retry failed jobs by `Idempotency-Key`, so that operations are exactly-once and repairable.  
+**Acceptance Criteria:**
+1. **Given** a failed hold/settlement with stored idem key, **when** Workers retry, **then** Payhub returns the original result atomically.  
+2. **Given** mismatch between ledger and balance snapshot, **when** repair runs, **then** the job detects and proposes corrective journals guarded by audit approval.  
+3. **Given** queue overload, **then** backpressure kicks in and metrics alert.  
 
 ---
 
-## 3) User Stories & Acceptance Criteria
+## 2) End‑to‑End Scenarios (Cross‑Service)
 
-### 3.1 Balances & Ledger
-**US‑PAY‑001** — *As an End User, I want to view my balances so that I know how much I can spend.*  
-**Acceptance Criteria**
-- `GET /v1/wallets/me/balances` returns non‑negative integers for STAR, FZ, PT.
-- Response includes `updatedAt` and optional pending/held amounts.
+### Scenario 1 — PlayHub Match: Hold → Game → Settle → Balance Update
+**Preconditions:** Both players have sufficient `available` balance in STAR/FZ/PT; PlayHub matched them (roomId).  
+**Steps:**
+1. **PlayHub → Payhub:** `POST /internal/v1/holds` twice for both players.  
+2. **Game Service:** Room created and played; winner decided.  
+3. **Game → PlayHub:** `POST /internal/v1/results` with winner.  
+4. **PlayHub → Payhub:** `POST /internal/v1/settlements` for both holds (`win` & `loss`), applying **7% rake** from config.  
+5. **Payhub → Events/Workers:** emit `wallet.settled` for WebApp refresh.  
+6. **WebApp → Payhub:** `GET /v1/wallets` shows updated balances.  
+**Alternates:** Hold creation fails → PlayHub returns error to UI; Game reports `draw` → `cancel` both holds; Partial settle if disconnect/time cap.  
+**Post‑conditions:** Consistent ledger; treasury accrual for rake; audit trail.  
+**Traceability:** §6.1 Settlement flow; §5 Interfaces.
 
-**US‑PAY‑002** — *As the Platform, I want every monetary action recorded as double‑entry ledger lines so that balances reconcile.*  
-**Acceptance Criteria**
-- Every mutation produces a journal with equal debits/credits and a `requestId`.
-- Journal lines are immutable; corrections use reversal entries.
+### Scenario 2 — Funding Purchase: Hold → Capture to Treasury
+**Preconditions:** Active sale; user chooses FZ; price and caps validated by Funding.  
+**Steps:**
+1. **Funding → Payhub:** `POST /internal/v1/holds` for purchase amount.  
+2. **Funding:** allocates units (`floor(amount/price)`), awaits finalize.  
+3. **Funding → Payhub:** `POST /internal/v1/settlements` with `outcome=win` to treasury account.  
+4. **Workers:** vesting/allocations updated downstream; notifications to user.  
+**Alternates:** Window ends without finalize → Funding cancels hold.  
+**Post‑conditions:** Treasury credited; user allocation created.  
+**Traceability:** §6 Purchase Flow; §5 Interfaces.
 
-**US‑PAY‑003** — *As Admin, I want to download a user statement so that I can investigate disputes.*  
-**Acceptance Criteria**
-- `GET /internal/v1/ledgers/:userId?from&to` returns CSV/JSON with running balances.
+### Scenario 3 — Conversion STAR→PT for Game Entry
+**Preconditions:** Rates present in config; user has STAR.  
+**Steps:** WebApp → Payhub `POST /v1/conversions`; Payhub posts ledger; WebApp refreshes balances.  
+**Alternates:** Rate stale → 409 `stale_rate`; retry after refresh; insufficient funds → 409.  
+**Post‑conditions:** PT available increases; audit conversion recorded.
 
-### 3.2 Holds & Settlements (S2S)
-**US‑PAY‑010** — *As PlayHub, I want to place a hold on a user’s funds when they join matchmaking so that the stake is locked.*  
-**Acceptance Criteria**
-- `POST /internal/v1/holds` with `{ userId, currency, amount, purpose, idemKey }` returns `holdId` if balance is sufficient.
-- Insufficient balance → `409 conflict` with code `insufficient_funds`; no journal entry.
-- Idempotency: same `idemKey` returns the original hold.
-
-**US‑PAY‑011** — *As PlayHub, I want to settle holds when a winner is reported so that payouts are final.*  
-**Acceptance Criteria**
-- `POST /internal/v1/settlements` with `{ holdId, outcome: 'win'|'loss'|'cancel', roomId? }` posts journals:
-  - `win`: loser debits → treasury pool then credits winner net of rake; fees routed to treasury.
-  - `loss`: loser hold consumed; no credit to loser.
-  - `cancel`: funds released back to owner balance.
-- Idempotent by `requestId`/`idemKey`.
-
-**US‑PAY‑012** — *As Funding, I want a hold then capture model so that purchases are confirmed at finalize time.*  
-**Acceptance Criteria**
-- Hold created at purchase intent; settle `win` to project treasury at finalize.
-- Auto‑cancel holds on sale window end if not finalized.
-
-**US‑PAY‑013** — *As Escrow, I want multi‑party holds and conditional release so that P2P trades are safe.*  
-**Acceptance Criteria**
-- Escrow creates two holds; release both to winner or split per policy; cancel on dispute resolve.
-
-### 3.3 Deposits
-**US‑PAY‑020** — *As Admin, I want to manually credit STAR/FZ/PT to a user so that support can resolve issues.*  
-**Acceptance Criteria**
-- `POST /internal/v1/deposits/manual` requires **two‑person approval** via Admin BFF (pre‑executed approvalId).
-- Journal debits from `treasury:adjustments` and credits `user:currency` with `reason`.
-- Idempotent on `requestId`.
-
-**US‑PAY‑021** — *As an End User, I want to see deposit history so that I can verify credits.*  
-**Acceptance Criteria**
-- `GET /v1/wallets/me/activities?type=deposit` returns paged list with source and status.
-
-*(Future)* **US‑PAY‑022** — *As the Platform, I want to accept on‑ramp webhooks so that fiat/crypto deposits can be credited.*  
-**Acceptance Criteria**
-- `POST /webhooks/onramp` verifies signature, deduplicates by provider event id, then journals credit.
-
-### 3.4 Withdrawals
-**US‑PAY‑030** — *As an End User, I want to request a withdrawal so that I can cash out.*  
-**Acceptance Criteria**
-- `POST /v1/withdrawals` validates limits, cool‑downs, and minimums from Config.
-- Status becomes `pending_review` and a hold is placed on requested amount.
-- Returns `withdrawalId` and ETA hints.
-
-**US‑PAY‑031** — *As Finance Operator, I want to approve a withdrawal with 4‑eyes so that payouts are controlled.*  
-**Acceptance Criteria**
-- Admin BFF `POST /internal/v1/withdrawals/:id/approve` requires a second approver and capability checks.
-- On approval, a **Worker** enqueues payout execution.
-
-**US‑PAY‑032** — *As Workers, I want to execute the payout and mark it complete so that the user is paid.*  
-**Acceptance Criteria**
-- Worker dequeues approved withdrawal, executes payout (off‑chain in MVP), journals movement, marks status `paid`.
-- Failure retries with exponential backoff; after max attempts → `failed` and hold is released back.
-
-**US‑PAY‑033** — *As an End User, I want to cancel my pending withdrawal before approval so that I can keep my funds.*  
-**Acceptance Criteria**
-- `POST /v1/withdrawals/:id/cancel` allowed only in `pending_review`; releases hold.
-
-### 3.5 Conversions
-**US‑PAY‑040** — *As an End User, I want to convert STAR↔FZ↔PT so that I can participate in different features.*  
-**Acceptance Criteria**
-- `POST /v1/conversions` with `{ from, to, amount }` validates config rates & fees and minimums.
-- Journal: debit `user:from`, credit `user:to`, fee to treasury.
-- Quote endpoint `GET /v1/conversions/quote?from&to&amount` returns exact received amount and fee; idempotent execution ties to quote id and expires after short TTL.
-
-**US‑PAY‑041** — *As Admin, I want to pause conversions globally so that I can mitigate risk.*  
-**Acceptance Criteria**
-- Config flag `conversions.enabled=false` makes quote return `503` with `retryAfter` header.
-
-### 3.6 Rewards & Adjustments
-**US‑PAY‑050** — *As Campaigns, I want to credit rewards to winners so that incentives are distributed.*  
-**Acceptance Criteria**
-- `POST /internal/v1/rewards` with `{ userId, currency, amount, campaignId }` journals credit from `treasury:campaigns` to user.
-- Idempotent by `(userId,campaignId)` pair.
-
-**US‑PAY‑051** — *As PlayHub, I want to distribute CFB rake and payouts automatically so that results settle correctly.*  
-**Acceptance Criteria**
-- On CFB `win`, 7% rake (configurable bps) routes to `treasury:rake` before net payout to winners (owner or acceptor pool).
-
-### 3.7 Statements & Exports
-**US‑PAY‑060** — *As an End User, I want a filterable activity list so that I can track usage.*  
-**Acceptance Criteria**
-- `GET /v1/wallets/me/activities?type&from&to` supports pagination and stable ordering.
-
-**US‑PAY‑061** — *As Finance, I want to export journals and balances for a date range so that I can reconcile.*  
-**Acceptance Criteria**
-- `GET /internal/v1/export/journals?from&to` and `.../balances` generate CSV/Parquet; large jobs delegated to Workers and stored in object storage with signed URLs.
-
-### 3.8 Limits, Risk & Compliance
-**US‑PAY‑070** — *As the Platform, I want per‑user daily and monthly withdrawal limits so that risk is controlled.*  
-**Acceptance Criteria**
-- Limits and cool‑downs from Config; violations return `422` with detail.
-
-**US‑PAY‑071** — *As the Platform, I want deny‑listed accounts blocked from financial actions so that we comply with policy.*  
-**Acceptance Criteria**
-- Config `users.denyList` and `countries.denyList` enforced at mutation time.
-
-**US‑PAY‑072** — *As the Platform, I want velocity checks for holds and conversions so that abuse is detected.*  
-**Acceptance Criteria**
-- Sliding window counts per user and per IP; exceeding thresholds → `429` with retry hints.
-
-### 3.9 Observability & Reconciliation
-**US‑PAY‑080** — *As Ops, I want metrics for holds, settlements, and payout latencies so that I can detect regressions.*  
-**Acceptance Criteria**
-- Prometheus metrics: `holds_created_total`, `settlements_total{outcome}`, `withdrawals_latency_bucket`, `conversion_rate_usage`.
-
-**US‑PAY‑081** — *As Finance, I want nightly valuation reports so that we can reconcile treasury balances.*  
-**Acceptance Criteria**
-- Worker aggregates end‑of‑day balances, fetches reference prices from **Price Service**, computes valuations per currency, and writes a dated report to object storage.
-
-**US‑PAY‑082** — *As Ops, I want structured logs and traces so that issues are debuggable.*  
-**Acceptance Criteria**
-- Pino logs with `requestId`, `userId`, `holdId`; OpenTelemetry spans across services.
-
-### 3.10 Idempotency & Integrity
-**US‑PAY‑090** — *As the Platform, I want all POSTs to be idempotent so that retries are safe.*  
-**Acceptance Criteria**
-- `Idempotency-Key` required on mutating POSTs; repeated calls return the first committed result.
-
-**US‑PAY‑091** — *As the Platform, I want automatic reversal on partial failures so that the ledger never drifts.*  
-**Acceptance Criteria**
-- If a multi‑step settlement fails mid‑way, a compensating journal is written and the request is marked `reversed` with reason.
+### Scenario 4 — Admin Grant Reward
+**Preconditions:** Staff with `finance.deposit`.  
+**Steps:** Admin BFF → Payhub `POST /internal/v1/deposits`; user sees new balance; event emitted.  
+**Alternates:** Wrong user → 404; idem retry returns same `depositId`.  
+**Post‑conditions:** Ledger balanced; audit trail with actorId.
 
 ---
 
-## 4) Edge Cases & Rules
-- Holding exactly all available balance leaves zero spendable; further holds → `insufficient_funds`.
-- Cancelled holds restore spendable immediately; settlement `loss` consumes the hold permanently.
-- Conversion quotes expire; executing with an expired quote → `409 conflict`.
-- Withdrawal cancel allowed only before approval; after `approved` state it requires staff intervention.
-- Duplicate webhook events (future on‑ramp) are detected via provider event id and ignored.
-- Treasury accounts cannot go negative; config validation at startup prevents invalid fee/rake bps.
+## 3) Assumptions & Open Questions
+**Assumptions**
+- MVP assets: **STAR/FZ/PT**; USDT integration deferred but modeled in data schema.  
+- Rake default **7%** as per PlayHub CFB doc; configurable via **tg‑miniapp‑config**.  
+- Holds may expire via TTL (Workers cron) if caller forgets to settle.  
+- Conversions use signed config rates or **Price Service** when enabled.
+
+**Open Questions**
+1. What are the **per‑asset withdrawal policies** for MVP (disabled, voucher, or manual)?  
+2. Treasury account structure: per asset single account vs multi‑bucket?  
+3. Detailed **fee rounding** rule (banker’s rounding vs floor/ceil in favor of treasury).  
+4. Max **holds per user** and **max onHold/available ratio** for risk control.  
+5. Required **export formats** for finance (CSV columns, timezones).
 
 ---
 
-## 5) Dependencies
-- **Identity** — verifies session JWTs (user endpoints) and service JWTs (internal).
-- **PlayHub** — creates holds and triggers settlements; supplies roomId and outcomes (including **CFB v1**).
-- **Funding** — hold→capture for purchases; refunds use `cancel` settlement.
-- **Escrow** — multi‑party holds and conditional release.
-- **Campaigns** — rewards credit; idempotent by campaignId.
-- **Price Service** — valuations for reports; not used for user conversions in MVP unless configured.
-- **Workers** — executes payouts, exports, and nightly reconciliation.
-- **Admin** — approvals (two‑person) and audits; manual credits and withdrawal approvals.
-- **Config** — hot reload for fees, limits, treasury routing accounts, enabled flags.
-- **Infra** — object storage, metrics, logs, traces.
-- **Shared** — DTOs, headers, error envelope, idempotency helpers.
+## 4) Permissions Matrix (Summary)
+| Action | User | Staff (Finance) | Admin (Platform) | Services (PlayHub/Funding/Escrow) |
+|---|---:|---:|---:|---:|
+| GET /v1/wallets | ✅ | ✅ | ✅ | ❌ |
+| POST /internal/v1/wallets/provision | ❌ | ✅ | ✅ | ✅ (Workers only) |
+| POST /internal/v1/holds | ❌ | ❌ | ❌ | ✅ |
+| POST /internal/v1/settlements | ❌ | ❌ | ❌ | ✅ |
+| POST /internal/v1/deposits | ❌ | ✅ | ✅ | ✅ (Workers) |
+| POST /v1/withdrawals | ✅ (policy) | ✅ (review) | ✅ | ❌ |
+| GET /internal/v1/ledger/:journalId | ❌ | ✅ | ✅ | ❌ |
+| GET /internal/v1/wallets | ❌ | ✅ | ✅ | ❌ |
 
 ---
 
-## 6) Non‑Functional Stories
-**US‑NF‑PAY‑001** — *As a User, I want balance reads under 150 ms p95.*  
-**US‑NF‑PAY‑002** — *As Ops, I want 99.95% availability for hold/settle endpoints.*  
-**US‑NF‑PAY‑003** — *As Security, I want all money values stored as integers with currency precision and validated schemas.*  
-**US‑NF‑PAY‑004** — *As Compliance, I want full auditability: every mutation has `requestId`, `actor`, `purpose`.*  
-**US‑NF‑PAY‑005** — *As DevEx, I want OpenAPI and contract tests using shared DTOs.*
+## 5) SLOs & Observability
+- **Holds** p95 < 80 ms; **Settlements** p95 < 120 ms; error rate < 0.1%.  
+- **Ledger**: zero‑skew invariant job; alert if nonzero > 1 minute.  
+- **Queues**: retry budget < 5 attempts; dead‑letter alert.  
+- **Dashboards**: balances, holds per minute, settlement outcomes, fee accrual, treasury balance, conversion volume.
 
 ---
 
-## 7) Traceability (Endpoints × Stories)
-- `GET /v1/wallets/me/balances` → US‑PAY‑001  
-- `GET /v1/wallets/me/activities` → US‑PAY‑060, US‑PAY‑021  
-- `POST /internal/v1/holds` → US‑PAY‑010  
-- `POST /internal/v1/settlements` → US‑PAY‑011, US‑PAY‑012, US‑PAY‑013, US‑PAY‑051  
-- `POST /internal/v1/rewards` → US‑PAY‑050  
-- `POST /v1/withdrawals` → US‑PAY‑030  
-- `POST /v1/withdrawals/:id/cancel` → US‑PAY‑033  
-- `POST /internal/v1/withdrawals/:id/approve` (Admin BFF) → US‑PAY‑031  
-- `POST /v1/conversions` and `GET /v1/conversions/quote` → US‑PAY‑040, US‑PAY‑041  
-- `GET /internal/v1/export/*` → US‑PAY‑061
-
----
-
-### Definition of Ready (DoR)
-- Story includes persona, goal, measurable acceptance criteria, and dependencies.  
-- DTOs and ledger impacts identified; idempotency keys defined.  
-- Config flags and limits referenced.
-
-### Definition of Done (DoD)
-- Unit and contract tests pass; journals reconcile to zero drift.  
-- Metrics, logs, and traces in place; dashboards updated.  
-- Admin flows and approvals exercised in staging.
+*Last generated:* 2025-09-25 14:05 +07
