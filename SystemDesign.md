@@ -126,15 +126,15 @@ erDiagram
 
   ACCOUNT { 
     string id PK
-    string ownerType        // user|org|system
+    string ownerType        
     string ownerId
     datetime createdAt
-    string status           // active|locked|closed
+    string status           
   }
   BALANCE {
     string id PK
     string accountId FK
-    string currency         // FZ|PT|STAR|FUZE|USDT
+    string currency         
     string available
     string pending
     datetime updatedAt
@@ -145,27 +145,27 @@ erDiagram
     string currency
     string debit
     string credit
-    string refType          // deposit|withdrawal|hold|settlement|conversion|stake|invoice
+    string refType          
     string refId
     string desc
     datetime ts
-    string idemKey          // idempotency key
+    string idemKey          
   }
   HOLD_TX {
     string id PK
     string accountId FK
     string currency
     string amount
-    string state            // active|released|captured|expired
-    string purpose          // playhub|funding|escrow
-    string metadata         // roomId|saleId|...
+    string state            
+    string purpose          
+    string metadata         
     datetime createdAt
     datetime updatedAt
   }
   SETTLEMENT {
     string id PK
     string holdId FK
-    string outcome          // win|loss|release
+    string outcome          
     string amount
     string feeBps
     string feeAmount
@@ -174,8 +174,8 @@ erDiagram
   DEPOSIT_ADDR {
     string id PK
     string accountId FK
-    string token            // FUZE|USDT
-    string network          // e.g., ethereum
+    string token           
+    string network         
     string address
     datetime createdAt
   }
@@ -187,7 +187,7 @@ erDiagram
     string txHash
     string amount
     int confirmations
-    string status           // detected|confirmed|credited|failed
+    string status           
     datetime detectedAt
     datetime creditedAt
   }
@@ -199,7 +199,7 @@ erDiagram
     string toAddress
     string amount
     string fee
-    string status           // requested|queued|broadcasted|confirmed|failed|refunded
+    string status          
     string txHash
     datetime requestedAt
     datetime updatedAt
@@ -212,7 +212,7 @@ erDiagram
     string rate
     int feeBps
     datetime expiresAt
-    string status           // open|expired|used
+    string status          
   }
   CONVERSION_TRADE {
     string id PK
@@ -226,26 +226,26 @@ erDiagram
   STAKE_POSITION {
     string id PK
     string accountId FK
-    string token            // FUZE
+    string token          
     string staked
     datetime since
-    string status           // active|unstaking|closed
+    string status        
   }
   DISTRIBUTION {
     string id PK
-    string period           // 2025Q3
-    string token            // USDT|USDC
+    string period       
+    string token           
     string totalPayout
     datetime executedAt
   }
   INVOICE {
     string id PK
     string accountId FK
-    string meterKey         // service.usage.metric
-    string period           // 2025-09
-    string currency         // FZ|PT
+    string meterKey       
+    string period 
+    string currency  
     string amount
-    string status           // open|paid|void|failed
+    string status      
     datetime issuedAt
     datetime settledAt
   }
@@ -494,7 +494,7 @@ sequenceDiagram
     PH-->>UI: 403 Badge required
   else OK
     ID-->>PH: Allowed
-    PH->>PH: Check free tier; maybe create invoice
+    PH->>PH: Check free tier, maybe create invoice
     alt Over limit
       PH-->>UI: 402 Payment Required (FZ/PT)
     else In limit
@@ -516,7 +516,7 @@ sequenceDiagram
   PH-->>PL: 201 holdId
   Note over PL,PH: Match completes
   PL->>PH: POST /internal/v1/settlements (holdId, outcome, feeBps=700)
-  PH->>PH: Apply ledger moves; winner gets pot minus fee
+  PH->>PH: Apply ledger moves, winner gets pot minus fee
   PH-->>PL: 200 Settled
 ```
 
