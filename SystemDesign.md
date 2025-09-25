@@ -9,7 +9,7 @@ Change Basis: Updated to reflect latest UserStories
 
 ---
 
-# 1) Architecture Diagram (flowchart)
+# 1) Architecture Diagram 
 
 ```mermaid
 flowchart LR
@@ -111,7 +111,7 @@ flowchart LR
 
 ---
 
-# 4) Data Design (Mermaid ER)
+# 4) Data Design 
 
 ```mermaid
 erDiagram
@@ -458,7 +458,7 @@ components:
 
 ---
 
-# 6) Data Flows (sequence diagrams)
+# 6) Data Flows
 
 ## 6.1 Deposit crediting
 
