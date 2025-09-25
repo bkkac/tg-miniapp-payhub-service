@@ -1,71 +1,78 @@
 
 Repo: tg-miniapp-payhub-service
 File: SystemDesign.md
-SHA-256: 8c3e51532d2f8789d5e68474faedefad3fa4c07532fae624428b6ca616dcd2d7
-Bytes: 18938
-Generated: 2025-09-26 00:40 GMT+7
+SHA-256: 86163f4abf80ebea4f37212d831b27d5caf1c86ea83e60742f24f61a0dffa073
+Bytes: 18760
+Generated: 2025-09-26 02:26 GMT+7
 Inputs: Old SystemDesign.md (ref), UserStories.md (authoritative), API Spec Guide, Data Schema Guide
 Change Basis: Updated to reflect latest UserStories
 
 ---
 
-# 1) Architecture Diagram 
+# 1) Architecture Diagram (flowchart)
 
 ```mermaid
 flowchart LR
-  subgraph Clients
-    TG["Telegram Mini App"]
-    WEB["Web3 Portal"]
-    ADM["Admin Console"]
-    SVC["Other Services (PlayHub, Funding, Events, Campaigns)"]
+  subgraph Callers
+    PH["PlayHub Service"]
+    FUN["Funding Service"]
+    ESC["Escrow Service"]
+    CMP["Campaigns Service"]
+    ADM["Admin Service"]
+    WEB["Telegram Mini App"]
   end
 
-  subgraph Payhub
-    API["Payhub API"]
-    LEDGER["Ledger & Balances"]
-    HOLD["Holds & Settlements"]
-    FX["Conversion Engine"]
-    WD["Withdrawals"]
-    DEP["Deposits"]
-    STK["Staking"]
-    BILL["Billing & Invoices"]
-    CFGC["Config Cache"]
-    DB["Primary DB"]
+  subgraph "Payhub Service"
+    API["HTTP API"]
+    LED["Double-Entry Ledger"]
+    HLD["Hold Manager"]
+    SET["Settlement Engine"]
+    FX["Conversion Engine (Quotes/Confirm)"]
+    INV["Invoices & Overage Billing"]
+    ACC["Accounts & Balances"]
+    WH["Webhooks Dispatcher"]
+    MTR["Metering"]
+    JOB["Schedulers/Workers"]
     CCH["Redis Cache"]
+    DB["MongoDB"]
+    SIG["Signing (Ed25519/HMAC)"]
   end
 
-  subgraph Infra
-    PRC["Price Service"]
+  subgraph "Platform Services"
     IDN["Identity Service"]
+    PRC["Price Service"]
     CFG["Config Service"]
-    EVT["Events/Workers"]
-    CHN["Chain RPC Providers"]
-    WAL["Wallet Providers"]
+    WRK["Global Workers/Dunning"]
   end
 
-  TG -->|balances, deposit, withdraw, convert, receipts| API
-  WEB -->|balances, deposit, withdraw, convert, staking| API
-  SVC -->|internal holds/settlements, payouts| API
-  ADM -->|admin actions, reports| API
+  subgraph "External"
+    KMS["KMS/HSM"]
+    CHA["Chain Gateways"]
+  end
 
-  API --> LEDGER
-  API --> HOLD
+  PH -->|holds, settlements, rake| API
+  FUN -->|holds, settlements, treasury payout| API
+  ESC -->|holds, split payouts| API
+  CMP -->|rewards/airdrop credits| API
+  ADM -->|adjustments, webhooks, limits| API
+  WEB -->|balances, conversions, invoices| API
+
+  API --> ACC
+  API --> LED
+  API --> HLD
+  API --> SET
   API --> FX
-  API --> WD
-  API --> DEP
-  API --> STK
-  API --> BILL
-  API --> CFGC
+  API --> INV
+  API --> MTR
+  API --> WH
   API --> DB
   API --> CCH
 
   FX --> PRC
+  INV --> WRK
   API --> IDN
-  API --> CFG
-  API --> EVT
-  DEP --> CHN
-  WD --> CHN
-  WEB --> WAL
+  SIG --> KMS
+  JOB --> CHA
 ```
 
 ---
@@ -74,336 +81,200 @@ flowchart LR
 
 | Layer | Choice | Notes |
 |---|---|---|
-| Runtime | Node.js 20 + TypeScript | Service parity across platform |
-| Web | Express, Zod | JSON APIs, strict validation |
-| Data | MongoDB (replica set) | Accounts, balances, ledger entries, holds, invoices, receipts, staking |
-| Cache | Redis Cluster | Idempotency keys, rate limits, quotes, short TTLs |
-| Jobs | BullMQ | Withdraw broadcasts, staking distributions, invoice dunning |
-| Crypto | Ethers v6 | ERC‑20 allowance/transfer encoding, checksum, parsing |
-| Pricing | Price Service (HTTP) | Mid‑prices, FX, fee tables |
-| Telemetry | OpenTelemetry + Pino | RED/USE metrics, traces |
-| Deploy | Docker + Helm + Argo CD | Blue/green & canary supported |
+| Runtime | Node.js 20 + TypeScript | Consistent across platform |
+| Web | Fastify + Zod | JSON APIs, input validation |
+| Data | MongoDB | Ledger, holds, settlements, invoices, quotes |
+| Cache | Redis Cluster | Idempotency keys, rate limits, hot balances |
+| Jobs | BullMQ | Expiry (holds/quotes), dunning, webhook retries |
+| Crypto | jose, tweetnacl | JWT/HMAC + Ed25519 signatures |
+| Observability | OpenTelemetry, Pino, Prometheus | RED/USE metrics & traces |
+| Deploy | Docker, Helm, Argo CD | Blue/green/canary |
 
 ---
 
 # 3) Responsibilities and Scope
 
 **Owns**
-- **Custody abstraction (off‑chain for Fz/PT/STAR)** and on‑chain interactions for **FUZE/USDT** deposits/withdrawals.
-- **Authoritative ledger** with double‑entry invariants and **idempotent** mutations.
-- **Holds & Settlements** for peer services (PlayHub matchmaking/CFB, Funding purchases, Escrow releases).
-- **Conversion** between on‑platform units (Fz/PT/STAR) and pricing/fees; quotes with expiry.
-- **Staking** accounting for FUZE stake positions and quarterly distributions in stablecoin.
-- **Billing** for **free‑tier metering** and **paid overage** (FZ/PT), invoices & receipts.
-- **Receipts & statements** surfaces to clients and Admin.
+- Accounts & double-entry ledger for STAR/FZ/PT/USDT (off-chain custody MVP).
+- Holds & settlements for PlayHub/Funding/Escrow/CFB with platform rake (e.g., 7%).
+- Credits/Debits for rewards, refunds, and overage charges.
+- Conversions: Quote + Confirm between STAR/FZ/PT/USDT using Price Service.
+- Invoices, metering, dunning for free-tier overage payable in FZ/PT.
+- Receipts & webhooks for downstream state sync.
 
 **Collaborates**
-- **Identity** for auth and badge/KYC introspection (withdrawal limits, high‑risk gating).
-- **Config** for prices, fee schedules, free limits, currencies, taxes.
-- **Price Service** for quotes, conversion rates.
-- **Events/Workers** for async broadcasts, reconciliations, distributions.
+- Identity (auth, badges/KYC), Price (rates), Config (limits, fees), Workers (dunning, scheduled expiry).
 
 **Not responsible**
-- Badge decisioning (Identity/Admin), gameplay results (PlayHub/Game), AI project evaluation (Funding).
+- On-chain custody in MVP (future), AML heuristics (beyond basic checks), UI rendering.
 
-**SLA to callers**
-- Idempotent write latency P95 ≤ 300ms; balance reads P95 ≤ 100ms. Availability 99.9%/mo.
+**SLA**
+- Balance read P95 ≤ 80 ms; hold/settle P95 ≤ 150 ms; webhook delivery within 60 s (P95). Availability 99.9%/mo.
 
 ---
 
-# 4) Data Design 
+# 4) Data Design (Mermaid ER)
 
 ```mermaid
 erDiagram
-  ACCOUNT ||--o{ BALANCE : has
-  ACCOUNT ||--o{ LEDGER_ENTRY : posts
-  ACCOUNT ||--o{ HOLD_TX : reserves
+  ACCOUNT ||--o{ JOURNAL : posts
+  JOURNAL ||--o{ JOURNAL_ROW : has
+  ACCOUNT ||--o{ HOLD : reserves
+  ACCOUNT ||--o{ SETTLEMENT : pays
+  ACCOUNT ||--o{ RECEIPT : issues
+  QUOTE ||--|| CONVERSION : confirms
   ACCOUNT ||--o{ INVOICE : billed
-  ACCOUNT ||--o{ RECEIPT : receives
-  ACCOUNT ||--o{ WITHDRAWAL : requests
-  ACCOUNT ||--o{ STAKE_POSITION : stakes
-  QUOTE ||--o{ CONVERSION_TRADE : materializes
+  ACCOUNT ||--o{ METER_USAGE : metered
+  WEBHOOK ||--o{ WEBHOOK_DELIVERY : delivers
 
-  ACCOUNT { 
+  ACCOUNT {
     string id PK
-    string ownerType        
+    string ownerType
     string ownerId
+    string currency
+    string status
     datetime createdAt
-    string status           
-  }
-  BALANCE {
-    string id PK
-    string accountId FK
-    string currency         
-    string available
-    string pending
     datetime updatedAt
   }
-  LEDGER_ENTRY {
+  JOURNAL {
     string id PK
-    string accountId FK
-    string currency
-    string debit
-    string credit
-    string refType          
+    string refType
     string refId
-    string desc
+    string idemKey
     datetime ts
-    string idemKey          
+    string hash
+    string prevHash
   }
-  HOLD_TX {
+  JOURNAL_ROW {
+    string id PK
+    string journalId FK
+    string accountId FK
+    string side
+    string amount
+    string memo
+  }
+  HOLD {
     string id PK
     string accountId FK
-    string currency
     string amount
-    string state            
-    string purpose          
-    string metadata         
+    string reason
+    string status
     datetime createdAt
-    datetime updatedAt
+    datetime expiresAt
   }
   SETTLEMENT {
     string id PK
     string holdId FK
-    string outcome          
-    string amount
-    string feeBps
+    string outcome
+    string feePct
     string feeAmount
-    datetime settledAt
-  }
-  DEPOSIT_ADDR {
-    string id PK
-    string accountId FK
-    string token           
-    string network         
-    string address
-    datetime createdAt
-  }
-  DEPOSIT_TX {
-    string id PK
-    string accountId FK
-    string token
-    string network
-    string txHash
-    string amount
-    int confirmations
-    string status           
-    datetime detectedAt
-    datetime creditedAt
-  }
-  WITHDRAWAL {
-    string id PK
-    string accountId FK
-    string token
-    string network
-    string toAddress
-    string amount
-    string fee
-    string status          
-    string txHash
-    datetime requestedAt
-    datetime updatedAt
-  }
-  QUOTE {
-    string id PK
-    string fromCurrency
-    string toCurrency
-    string amountFrom
-    string rate
-    int feeBps
-    datetime expiresAt
-    string status          
-  }
-  CONVERSION_TRADE {
-    string id PK
-    string quoteId FK
-    string accountId FK
-    string amountFrom
-    string amountTo
-    string feeAmount
-    datetime executedAt
-  }
-  STAKE_POSITION {
-    string id PK
-    string accountId FK
-    string token          
-    string staked
-    datetime since
-    string status        
-  }
-  DISTRIBUTION {
-    string id PK
-    string period       
-    string token           
-    string totalPayout
-    datetime executedAt
-  }
-  INVOICE {
-    string id PK
-    string accountId FK
-    string meterKey       
-    string period 
-    string currency  
-    string amount
-    string status      
-    datetime issuedAt
+    string memo
     datetime settledAt
   }
   RECEIPT {
     string id PK
-    string accountId FK
-    string refType
-    string refId
+    string ownerId
+    string kind
     string currency
     string amount
+    string refType
+    string refId
     datetime issuedAt
+    string sig
+  }
+  QUOTE {
+    string id PK
+    string from
+    string to
+    string amountFrom
+    string rate
+    datetime expiresAt
+    string tolerance
+    string sig
+    string requester
+  }
+  CONVERSION {
+    string id PK
+    string quoteId FK
+    string status
+    string amountTo
+    datetime confirmedAt
+  }
+  INVOICE {
+    string id PK
+    string ownerId
+    string meterKey
+    string period
+    string currency
+    string amount
+    string status
+    datetime issuedAt
+    datetime settledAt
+  }
+  METER_USAGE {
+    string id PK
+    string ownerId
+    string meterKey
+    int quantity
+    datetime ts
+  }
+  WEBHOOK {
+    string id PK
+    string url
+    string secret
+    string status
+    datetime createdAt
+  }
+  WEBHOOK_DELIVERY {
+    string id PK
+    string webhookId FK
+    string eventType
+    string payloadHash
+    string status
+    int attempt
+    datetime nextAttemptAt
   }
 ```
 
-**Indexes**  
-- Unique: DEPOSIT_ADDR(accountId, token, network), HOLD_TX(idemKey), LEDGER_ENTRY(idemKey).  
-- Search: WITHDRAWAL(status), DEPOSIT_TX(status, txHash), INVOICE(period, accountId).
+**Indexes**
+- ACCOUNT(ownerType, ownerId, currency) unique.
+- HOLD(accountId, status, expiresAt); TTL voiding worker uses expiresAt.
+- JOURNAL(ts); JOURNAL(idemKey) unique.
+- INVOICE(ownerId, period, meterKey) unique.
+- QUOTE(expiresAt); CONVERSION(quoteId) unique.
+- WEBHOOK_DELIVERY(status, nextAttemptAt) for retries.
 
-**Retention**  
-- Ledger/receipts retained 7 years. Quotes TTL by expiresAt.
+**Retention**
+- Journals and receipts retained 7 years; invoices 7 years; webhook deliveries 30 days; quotes 2 days.
 
-**Idempotency & Constraints**  
-- All money‑moving endpoints require Idempotency-Key. Ledger invariants: sum(debit)==sum(credit) per transaction group.
+**Idempotency**
+- All mutations require Idempotency-Key; stored on JOURNAL or operation record.
 
 ---
 
-# 5) Interfaces (OpenAPI 3.1)
+# 5) Interfaces (API Specification)
 
 ```yaml
 openapi: 3.1.0
 info:
-  title: Payhub Service API
-  version: 1.2.0
+  title: Payhub API
+  version: 1.3.0
 servers:
   - url: https://payhub.api
 security:
   - BearerAuth: []
 paths:
-  /v1/balances:
+  /v1/accounts/me:
     get:
-      summary: Get account balances
-      operationId: balancesList
+      summary: Get my balances
+      operationId: balancesGet
       responses:
-        "200": { description: OK }
-  /v1/wallets/deposit-address:
-    post:
-      summary: Issue deposit address for token/network
-      operationId: depositAddressCreate
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [token, network]
-              properties:
-                token: { type: string, enum: [FUZE, USDT] }
-                network: { type: string }
-      responses:
-        "200": { description: Address }
-  /v1/withdrawals:
-    post:
-      summary: Request withdrawal
-      operationId: withdrawalsCreate
-      parameters:
-        - in: header
-          name: Idempotency-Key
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [token, network, toAddress, amount]
-              properties:
-                token: { type: string, enum: [FUZE, USDT] }
-                network: { type: string }
-                toAddress: { type: string }
-                amount: { type: string }
-      responses:
-        "202": { description: Accepted }
-        "402": { description: Over free limit (pay FZ/PT) }
-        "403": { description: Badge required }
-  /v1/convert/quote:
-    post:
-      summary: Create quote for currency conversion
-      operationId: convertQuote
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [from, to, amount]
-              properties:
-                from: { type: string, enum: [FZ, PT, STAR, FUZE, USDT] }
-                to: { type: string, enum: [FZ, PT, STAR, FUZE, USDT] }
-                amount: { type: string }
-      responses:
-        "200": { description: Quote }
-        "409": { description: Unsupported pair }
-  /v1/convert/confirm:
-    post:
-      summary: Confirm quote and execute conversion
-      operationId: convertConfirm
-      parameters:
-        - in: header
-          name: Idempotency-Key
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [quoteId]
-              properties:
-                quoteId: { type: string }
-      responses:
-        "200": { description: Executed }
-        "409": { description: Quote expired/used }
-  /v1/staking/positions:
-    get:
-      summary: List staking positions
-      operationId: stakeList
-      responses:
-        "200": { description: OK }
-  /v1/invoices:
-    post:
-      summary: Create invoice for overage
-      operationId: invoiceCreate
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [meterKey, period, amount, currency]
-              properties:
-                meterKey: { type: string }
-                period: { type: string }
-                amount: { type: string }
-                currency: { type: string, enum: [FZ, PT] }
-      responses:
-        "201": { description: Created }
-  /v1/receipts:
-    get:
-      summary: List receipts
-      operationId: receiptsList
-      responses:
-        "200": { description: OK }
+        "200": { description: Balances with available, pending, onHold }
   /internal/v1/holds:
     post:
-      summary: Create a hold (server-to-server)
-      operationId: holdsCreate
+      summary: Create a hold
+      operationId: holdCreate
+      security: [{ ServiceAuth: [] }]
       parameters:
         - in: header
           name: Idempotency-Key
@@ -415,20 +286,26 @@ paths:
           application/json:
             schema:
               type: object
-              required: [ownerId, currency, amount, purpose, metadata]
+              required: [userId, currency, amount, reason]
               properties:
-                ownerId: { type: string }
-                currency: { type: string }
+                userId: { type: string }
+                currency: { type: string, enum: [STAR, FZ, PT, USDT] }
                 amount: { type: string }
-                purpose: { type: string }
-                metadata: { type: object, additionalProperties: true }
+                reason: { type: string }
+                ttlSec: { type: integer, minimum: 60 }
       responses:
-        "201": { description: Hold created }
-        "402": { description: Insufficient funds }
+        "200": { description: Created, returns holdId }
+        "409": { description: insufficient_funds }
   /internal/v1/settlements:
     post:
-      summary: Settle a hold outcome
-      operationId: settlementsCreate
+      summary: Settle a hold
+      operationId: settlementCreate
+      security: [{ ServiceAuth: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -438,142 +315,286 @@ paths:
               required: [holdId, outcome]
               properties:
                 holdId: { type: string }
-                outcome: { type: string, enum: [win, loss, release] }
-                feeBps: { type: integer }
+                outcome: { type: string, enum: [win, loss, split] }
+                splits:
+                  type: array
+                  items:
+                    type: object
+                    required: [userId, amount]
+                    properties:
+                      userId: { type: string }
+                      amount: { type: string }
+                rakePct: { type: number, format: float }
+                memo: { type: string }
       responses:
-        "200": { description: Settled }
+        "200": { description: Settlement receipt }
+        "409": { description: hold_invalid_or_expired }
+  /internal/v1/credits:
+    post:
+      summary: Credit balance
+      operationId: creditCreate
+      security: [{ ServiceAuth: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerId, currency, amount, refType, refId]
+              properties:
+                ownerId: { type: string }
+                currency: { type: string, enum: [STAR, FZ, PT, USDT] }
+                amount: { type: string }
+                refType: { type: string }
+                refId: { type: string }
+      responses:
+        "200": { description: Receipt }
+  /internal/v1/debits:
+    post:
+      summary: Debit balance (overage)
+      operationId: debitCreate
+      security: [{ ServiceAuth: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerId, currency, amount, meterKey, period]
+              properties:
+                ownerId: { type: string }
+                currency: { type: string, enum: [FZ, PT] }
+                amount: { type: string }
+                meterKey: { type: string }
+                period: { type: string }
+      responses:
+        "200": { description: Invoice settled or balance debited }
+        "402": { description: payment_required }
+  /v1/conversions/quote:
+    post:
+      summary: Create a conversion quote
+      operationId: conversionQuote
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to, amountFrom, tolerance]
+              properties:
+                from: { type: string, enum: [STAR, FZ, PT, USDT] }
+                to: { type: string, enum: [STAR, FZ, PT, USDT] }
+                amountFrom: { type: string }
+                tolerance: { type: string }
+      responses:
+        "200": { description: Quote with expiresAt and sig }
+        "409": { description: illiquid_or_unsuppported }
+  /v1/conversions/{quoteId}/confirm:
+    post:
+      summary: Confirm a conversion
+      operationId: conversionConfirm
+      parameters:
+        - in: path
+          name: quoteId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                acceptSlippage: { type: boolean, default: true }
+      responses:
+        "200": { description: Conversion success + receipt }
+        "410": { description: quote_expired }
+  /v1/invoices/{id}:
+    get:
+      summary: Get invoice
+      operationId: invoiceGet
+      responses:
+        "200": { description: Invoice state }
+        "404": { description: Not found }
+  /v1/invoices/{id}/pay:
+    post:
+      summary: Pay invoice with FZ or PT
+      operationId: invoicePay
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currency]
+              properties:
+                currency: { type: string, enum: [FZ, PT] }
+      responses:
+        "200": { description: Paid }
+        "409": { description: insufficient_funds }
+  /admin/v1/webhooks:
+    post:
+      summary: Register webhook
+      operationId: webhookRegister
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, secret]
+              properties:
+                url: { type: string, format: uri }
+                secret: { type: string }
+      responses:
+        "201": { description: Created }
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    ServiceAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
 ```
 
-**Standards**  
-- Error envelope: {{ code, message, requestId }}; RFC7807 optional.  
-- Pagination: cursor style for list endpoints.  
-- Rate limits: 30 rps/user; internal endpoints whitelisted by mTLS + service JWT.  
-- Idempotency: Idempotency-Key required on all mutations.
+**Standards**
+- Error envelope {{ code, message, requestId }}; idempotent mutations via Idempotency-Key; 402 used for payment_required.
+- Rate limits: public 20 rps/user; internal 200 rps/service; 429 with Retry-After header.
+- Webhooks signed with X-Payhub-Signature (HMAC SHA256) and X-Payhub-Timestamp.
 
 ---
 
-# 6) Data Flows
+# 6) Data Flows (sequence diagrams)
 
-## 6.1 Deposit crediting
+## 6.1 Hold then settle with 7% rake
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant PH as PlayHub
+  participant PAY as Payhub
+  PH->>PAY: POST /internal/v1/holds (Idem-Key)
+  PAY->>PAY: Reserve funds, post journal
+  PAY-->>PH: 200 { holdId }
+  Note over PH,PAY: Later when outcome known
+  PH->>PAY: POST /internal/v1/settlements { holdId, outcome, rakePct }
+  PAY->>PAY: Compute payouts and fee
+  PAY-->>PH: 200 { settlementId, receipt }
+```
+
+## 6.2 Conversion quote then confirm with overage charge
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant UI as Client
-  participant PH as Payhub
-  participant CH as Chain RPC
-  UI->>PH: POST /v1/wallets/deposit-address (token, network)
-  PH-->>UI: 200 address
-  Note over UI,PH: User sends on-chain transfer
-  PH->>CH: Poll txs for address
-  CH-->>PH: Detected tx (confirmations=1)
-  PH->>PH: Mark DEPOSIT_TX detected
-  CH-->>PH: confirmations >= threshold
-  PH->>PH: Credit ledger, update BALANCE, issue RECEIPT
-  PH-->>UI: Notification via Events/Workers
-```
+  participant PAY as Payhub
+  participant PRC as Price
 
-## 6.2 Withdrawal with badge/limit & overage
-
-```mermaid
-sequenceDiagram
-  participant UI as Client
-  participant PH as Payhub
-  participant ID as Identity
-  participant CH as Chain RPC
-  UI->>PH: POST /v1/withdrawals (Idem-Key)
-  PH->>ID: Introspect (Investor badge if high amount)
-  alt Missing/Expired
-    ID-->>PH: Not allowed
-    PH-->>UI: 403 Badge required
-  else OK
-    ID-->>PH: Allowed
-    PH->>PH: Check free tier, maybe create invoice
-    alt Over limit
-      PH-->>UI: 402 Payment Required (FZ/PT)
-    else In limit
-      PH->>CH: Broadcast tx
-      CH-->>PH: txHash
-      PH->>PH: Update status broadcasted->confirmed
-      PH-->>UI: 202 Accepted + receipt later
-    end
+  UI->>PAY: POST /v1/conversions/quote (Idem-Key)
+  PAY->>PRC: TWAP or spot rate
+  PRC-->>PAY: rate, expiresAt
+  PAY-->>UI: 200 { quoteId, rate, expiresAt, sig }
+  UI->>PAY: POST /v1/conversions/{quoteId}/confirm
+  PAY->>PAY: Check free tier, maybe create invoice
+  alt Overage due
+    PAY-->>UI: 402 Payment Required
+  else Within free tier
+    PAY->>PAY: Post journals, update balances
+    PAY-->>UI: 200 Receipt
   end
 ```
 
-## 6.3 Hold then settle (PlayHub)
-
-```mermaid
-sequenceDiagram
-  participant PL as PlayHub
-  participant PH as Payhub
-  PL->>PH: POST /internal/v1/holds (amount, currency, purpose=playhub, metadata=roomId)
-  PH-->>PL: 201 holdId
-  Note over PL,PH: Match completes
-  PL->>PH: POST /internal/v1/settlements (holdId, outcome, feeBps=700)
-  PH->>PH: Apply ledger moves, winner gets pot minus fee
-  PH-->>PL: 200 Settled
-```
-
-## 6.4 Convert quote then confirm
+## 6.3 Invoice payment flow
 
 ```mermaid
 sequenceDiagram
   participant UI as Client
-  participant PH as Payhub
-  participant PR as Price
-  UI->>PH: POST /v1/convert/quote (from,to,amount)
-  PH->>PR: Get rate and fees
-  PR-->>PH: rate, feeBps
-  PH-->>UI: 200 quote (expiresAt ~30s)
-  UI->>PH: POST /v1/convert/confirm (Idem-Key, quoteId)
-  PH->>PH: Check expiry, execute ledger swap, create receipt
-  PH-->>UI: 200 Executed
+  participant PAY as Payhub
+
+  UI->>PAY: GET /v1/invoices/{id}
+  alt Unpaid
+    PAY-->>UI: 200 { status: open, amount, currency }
+    UI->>PAY: POST /v1/invoices/{id}/pay { currency }
+    PAY-->>UI: 200 { status: paid, receipt }
+  else Paid
+    PAY-->>UI: 200 { status: paid }
+  end
+```
+
+## 6.4 Webhook delivery with retry
+
+```mermaid
+sequenceDiagram
+  participant PAY as Payhub
+  participant SVC as Service
+
+  PAY->>SVC: POST /webhook { eventType, payload, ts, sig }
+  alt 2xx
+    SVC-->>PAY: 204
+  else Error
+    SVC-->>PAY: 500
+    PAY->>PAY: Schedule retry with backoff
+  end
 ```
 
 ---
 
 # 7) Rules and Calculations
 
-- Currencies: FZ, PT, STAR (platform) and FUZE, USDT (on-chain).  
-- Badge/KYC gates: Investor badge for high withdrawals & unlimited purchases; Gamer badge for high‑stake PlayHub holds.  
-- Free tier & overage: monthly free usage metrics (withdraw attempts, conversion volume, service‑initiated holds); overage payable in FZ/PT via invoices.  
-- CFB/PlayHub fee: winner fee default 7% (configurable) sent as feeBps.  
-- Quotes: rate, feeBps, expiresAt; round down credits, separate fee line.  
-- Confirmations: credit after N confirmations per token/network (configurable).  
-- Staking: time‑weighted FUZE stakes, quarterly stablecoin distributions.  
-- Idempotency: identical Idempotency-Key returns same outcome.
+- Ledger: double-entry, journals must balance; available, onHold, pending.
+- Holds: reduce available, increase onHold; expiry returns to available.
+- Settlements: win releases hold to winner, loss forfeits; split supported; rakePct (e.g., 7%) credited to platform revenue.
+- Quotes: from Price Service; expiresAt default 30 s; tolerance applied; conversions atomic.
+- Badges/KYC: withdrawals and large conversions require KYC badge (level configurable); enforcement via Identity introspection.
+- Quotas & Overage: meter keys hold.create.day, settlement.confirm.day, conversion.confirm.day, transfer.create.day, withdrawal.create.month, webhook.deliver.day. Free limits from Config; FZ/PT used for overage via invoices.
+- Receipts: signed with Ed25519; include refType, refId, journalHash.
 
 ---
 
 # 8) Security and Compliance
 
-- JWT auth (Identity), mTLS for internal routes, per‑scope authorization.  
-- Hot wallet operations via KMS/HSM; withdrawal risk checks; geofence rules.  
-- HMAC‑signed webhooks; replay protection; audit every money move.  
-- Sensitive values redacted in logs; privacy retention windows applied.
+- AuthN/Z: user JWT for wallet actions; ServiceAuth JWT + HMAC body check for internal callers.
+- Encryption: TLS in transit; secrets in KMS; signatures rotate every 90 days.
+- PII/KYC: minimal PII; rely on Identity for KYC status; store only badge IDs and decision refs.
+- Audit: append-only journals, hash chaining; admin actions audited.
+- Fraud: velocity limits, anomaly alerts; manual review queue for flagged withdrawals (future).
 
 ---
 
 # 9) Scalability and Reliability
 
-- Append‑only ledger, batched writes, worker queues for RPC‑bound tasks.  
-- Circuit breakers on RPC/Price; retry with jitter; DLQ for stuck jobs.  
-- Multi‑AZ DB and cache; snapshots & PITR; RTO 30m, RPO 15m.
+- Stateless API; horizontal scale; Redis for hot paths.
+- Jobs with backoff and DLQ; idempotent consumers.
+- Dependency timeouts and circuit breakers to Price or Identity.
+- DR: multi-AZ Mongo; PITR; periodic ledger snapshots for recovery.
 
 ---
 
 # 10) Observability
 
-- Logs with requestId, accountId, idemKey.  
-- Metrics: deposits detect lag, withdrawal success rate, ledger imbalance gauge.  
-- Tracing across quote creation, ledger, RPC.  
-- Alerts: DLQ backlog, imbalance, RPC error burst.
+- Logs: structured with requestId, ownerId, operation, idemKey.
+- Metrics: ledger post ok/error, hold create fail rate, quote latency, webhook success ratio, invoice conversion.
+- Tracing: spans across quote to confirm, and hold to settle.
+- SLO Alerts: webhook backlog, ledger imbalance, price dependency timeouts.
 
 ---
 
@@ -581,45 +602,47 @@ sequenceDiagram
 
 | Key | Type | Example | Secret | Notes |
 |---|---|---|---|---|
-| PAY_MONGO_URI | string | mongodb+srv://... | yes | Primary DB |
-| PAY_REDIS_URI | string | redis://... | yes | Cache/queue |
-| PAY_RPC_ETH | string | https://... | yes | Chain RPC |
-| PAY_HOT_WALLET_KEY | string | hex or KMS ref | yes | Prefer KMS/HSM |
+| PAY_MONGO_URI | string | mongodb+srv://... | yes | Primary store |
+| PAY_REDIS_URI | string | redis://... | yes | Cache/idempotency |
 | PAY_QUOTE_TTL_SEC | int | 30 | no | Quote expiry |
-| PAY_CONFIRMATIONS_USDT | int | 6 | no | Credit threshold |
-| PAY_CONFIRMATIONS_FUZE | int | 12 | no | Credit threshold |
-| PAY_CFB_FEE_BPS | int | 700 | no | Winner fee default |
+| PAY_RAKE_PCT | number | 7 | no | Default CFB rake |
 | PAY_RATE_LIMITS | json | {{}} | no | Per route |
+| PAY_WEBHOOK_HMAC | string | base64 | yes | Signing secrets |
 | PAY_TIMEZONE | string | Asia/Bangkok | no | GMT+7 |
 | PAY_CONFIG_NAMESPACE | string | payhub | no | Dynamic config |
+| PAY_SIGNING_KEY | string | base64 | yes | Receipt signing |
 
-*Precedence:* ENV > Config Service > defaults.
+Precedence: ENV > Config Service > defaults.
 
 ---
 
-# 12) User Stories Traceability
+# 12) User Stories and Feature Traceability
 
-| Story | Area | APIs/Jobs | Entities | Diagram |
+| Story | Feature | APIs/Events | Entities | Diagram |
 |---|---|---|---|---|
-| Deposit ERC‑20 | Deposits | /v1/wallets/deposit-address, worker | DEPOSIT_ADDR, DEPOSIT_TX, LEDGER_ENTRY, RECEIPT | 6.1 |
-| Withdraw ERC‑20 | Withdrawals | /v1/withdrawals, worker | WITHDRAWAL, LEDGER_ENTRY, RECEIPT | 6.2 |
-| Convert funds | Conversion | /v1/convert/* | QUOTE, CONVERSION_TRADE, LEDGER_ENTRY | 6.4 |
-| Hold & Settle | Holds | /internal/v1/holds, /internal/v1/settlements | HOLD_TX, SETTLEMENT, LEDGER_ENTRY | 6.3 |
-| Staking | Staking | jobs + /v1/staking/positions | STAKE_POSITION, DISTRIBUTION, LEDGER_ENTRY | — |
-| Overage billing | Billing | /v1/invoices, /v1/receipts | INVOICE, RECEIPT, LEDGER_ENTRY | 6.2 |
+| A1.1 Accounts & balances | Ledger | /v1/accounts/me | ACCOUNT, JOURNAL | — |
+| B1.1 Create hold | Holds | /internal/v1/holds | HOLD, JOURNAL | 6.1 |
+| B1.2 Settle hold | Settlements | /internal/v1/settlements | SETTLEMENT, RECEIPT | 6.1 |
+| B1.3 Platform rake | Fees | settlements | JOURNAL | 6.1 |
+| C1.1 Credit | Credits | /internal/v1/credits | JOURNAL, RECEIPT | — |
+| C1.2 Debit overage | Debits | /internal/v1/debits | INVOICE, JOURNAL | 6.2 or 6.3 |
+| D1.1 Quote/Confirm | FX | /v1/conversions/* | QUOTE, CONVERSION, RECEIPT | 6.2 |
+| F1.1 Treasury payout | Funding | settlements | RECEIPT | — |
+| F1.2 Game/CFB payout | PlayHub | settlements | RECEIPT | 6.1 |
+| G1.1 Webhooks | Webhooks | deliveries | WEBHOOK, WEBHOOK_DELIVERY | 6.4 |
 
 ---
 
 # 13) Roadmap
 
-- MVP: ERC‑20 deposit/withdraw, holds/settlements, FZ/PT/STAR ledger, conversion quotes & confirm, invoices/receipts.  
-- GA: staking distributions automation, multi‑chain support, advanced risk & address book, partial withdrawals, batched payouts.  
-- Future: on‑chain proof of reserves, L2 bridges, account abstraction.
+- MVP: off-chain balances for STAR/FZ/PT/USDT, holds/settlements, quotes/confirm, invoices for overage, webhooks.
+- GA: on-chain deposit watchers and withdrawal pipelines, multi-chain USDT networks, automated compliance flags.
+- Future: fiat on-ramps, staking treasury accounts, revenue share accounting.
 
 ---
 
 # 14) Compatibility Notes
 
-- Aligned to UserStories: added explicit free‑tier metering & overage billing, 7% CFB fee via settlement feeBps, staking distribution surfaces, stricter idempotency.  
-- Differences from old SystemDesign: consolidates internal endpoints under /internal/v1/*; clarifies quote TTL and rounding; formalizes ledger entities for holds/settlements and invoices.  
-- Migration: backfill existing holds to new HOLD_TX with purpose and metadata; reindex ledger by idemKey; rotate hot wallet secrets to KMS references.
+- Aligned to UserStories: explicit metering + invoices (FZ/PT), 7% rake support, signed receipts, split settlements.
+- Delta vs old SystemDesign: normalized entity names, added invoice endpoints, clarified webhook delivery retries; Mermaid labels quoted and ER has no inline comments.
+- Migration: create unique indexes; backfill existing hold/settlement refs; rotate signing keys; map existing fees into rakePct config.
