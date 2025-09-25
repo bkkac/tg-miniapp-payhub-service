@@ -2,257 +2,267 @@
 
 Repo: tg-miniapp-payhub-service
 print:
-SHA-256: cfa7fd2dbd8796c1967cabc2032bd06e24032123ce089f9afb1396bdba30efd5
-Bytes: 15758
+SHA-256: 4777a071c07bb9efffcdb6cc05b27b1d1b1d3f9bf29ef17efb509926f7624301
+Bytes: 15844
 
-> Traceability: Maps to **SystemDesign.md — tg-miniapp-payhub-service** (notably §§ Architecture, 3 Responsibilities, 4 Data Model, 5 Interfaces, 6 Flows, 7 Security, 8 Reliability, 9 Observability, 10 Configuration).  
-> Global Product Rules applied: Crypto UX, Badge & KYC gating, Free‑tier limits with FZ/PT overage, Per‑repo verification.
+> Traceability: Maps to **SystemDesign.md — tg-miniapp-payhub-service** (Ledger, Accounts, Holds/Settlements, Credits/Debits, Conversions, Deposits/Withdrawals, Webhooks, Security, Observability).  
+> Global Product Rules applied: Crypto UX, Badge & KYC gating, Free‑tier limits with FZ/PT overage, Per‑repo verification.  
+> MVP scope: **Off‑chain custody** for **STAR/FZ/PT**; on‑chain **USDT** deposits/withdrawals supported via custodial hot wallet with confirmations; future multi‑chain expansion prepared.
 
-_Last updated: 2025-09-25 15:23 +07_
+_Last updated: 2025-09-25 17:07 +07_
 
 ---
 
 ## Epics → Features → Stories
 
-### Epic A — Accounts, Balances, and Ledger (Core Custody)
+### Epic A — Accounts & Ledger (Double‑Entry)
 
-**Feature A1: Create platform account & base balances**
-**Story A1.1** — *As a newly authenticated user, I want a Payhub account with balances in STAR, FZ, PT (and USDT for future on‑chain), so that I can deposit, convert, and pay for services.*  
+**Feature A1: Create and manage accounts**
+**Story A1.1** — *As the system, I want a double‑entry ledger with per‑user/org accounts so that balances are consistent and auditable.*  
 **Acceptance Criteria (GWT)**
-1. **Given** I sign in the WebApp, **when** Payhub receives a `POST /internal/v1/accounts/provision` from Identity, **then** an **Account** with sub‑ledgers for STAR, FZ, PT (and placeholder USDT) is created with zero balances.  
-2. **Given** the call retries with the same `Idempotency-Key`, **when** it is processed, **then** the same Account is returned (`200`) and **no duplicate** ledger rows are written.  
-3. **Given** Account exists, **when** I query `/v1/me/balances`, **then** I see available, pending, and held amounts per asset.
+1. **Given** a new user/org, **when** Identity creates the subject, **then** Payhub provisions **Accounts** for STAR/FZ/PT/USDT with `status=active` and `currency` decimals.  
+2. **Given** I query my balances, **when** I call `GET /v1/accounts/balances`, **then** I receive available, pending, and on‑hold for each currency.  
+3. **Given** ledger invariants, **when** any journal is posted, **then** total debits equal total credits; otherwise the write is rejected and an alert is raised.
 
-- **Roles & Permissions:** Any authenticated user (session JWT). Staff can provision bulk.  
-- **Usage & Billing:** **Not metered**; provisioning is free.  
-- **Data Touchpoints:** `Account(id, userId)`, `Balance(asset, available, pending, held)`, `JournalEntry` double‑entry.  
-- **Cross‑Service:** Triggered by Identity, used by WebApp, PlayHub, Funding.  
-- **State & Lifecycle:** `created → active → (suspended/closed)` for risk events.  
-- **Security:** All mutations require user session or service JWT; audit trail per entry.  
-- **Performance:** p95 balances < 80 ms; paginated ledger queries.
+- **Data Touchpoints:** `Account(id, ownerType:user|org, currency, status)`, `Journal(id, rows[], idemKey, refType, refId)`.  
+- **Observability:** metric `ledger.post.ok/error`; audit per journal with hash chain.
 
-**Feature A2: Holds & Settlements for S2S**
-**Story A2.1** — *As a service (PlayHub/Funding/Escrow), I want to place **holds** and later **settle** or **void** them so that funds are reserved for outcomes.*  
+**Feature A2: Idempotent posting**
+**Story A1.2** — *As an integrator, I want idempotent writes so that retries do not double‑charge users.*  
 **AC**
-1. **Given** `POST /internal/v1/holds` with `{accountId, asset, amount}` and idem key, **when** balance is sufficient, **then** **held** increases and a `holdId` is returned.  
-2. **Given** the balance is insufficient, **when** the request arrives, **then** `409 insufficient_funds` is returned with remaining balance.  
-3. **Given** a hold exists, **when** `POST /internal/v1/settlements` with `{holdId, outcome: win | loss | void}`, **then** funds move:  
-   - `win`: move both players’ held funds to winner available (PlayHub), fees applied.  
-   - `loss`: release loser hold to treasury (or counterparty).  
-   - `void`: move held → available to original owner.  
-4. **Given** idem repeat, **when** re‑called, **then** same `settlementId` is returned; no duplicate effects.
-
-- **Metering:** **Free tier** includes up to **100 holds/month per service**; overage is billed to service owner org in **FZ/PT** (see Epic E).  
-- **Data:** `Hold(id, accountId, asset, amount, status)`, `Settlement(id, outcome)`.  
-- **Cross‑Service:** PlayHub, Funding, Escrow use S2S endpoints with service JWT.  
-- **Observability:** metrics `hold_ok`, `settle_ok`, `insufficient_funds`, `idem_replay`.
+1. **Given** `Idempotency-Key` header, **when** the same write is retried, **then** the previous result is returned with `x-idem-hit=true`.  
+2. **Given** different payload with same key, **when** retried, **then** `409 idem_mismatch` is returned with canonical payload hash.
 
 ---
 
-### Epic B — Deposits, Withdrawals, Conversions
+### Epic B — Holds & Settlements (Matchmaking, Funding, Escrow, CFB)
 
-**Feature B1: Off‑chain deposit (STAR/FZ/PT)**
-**Story B1.1** — *As a user, I want to deposit STAR/FZ/PT to my Payhub account so that I can spend in the app.*  
+**Feature B1: Create hold**
+**Story B1.1** — *As PlayHub/Funding/Escrow, I want to place a hold on a user balance so that funds are reserved before the outcome is known.*  
 **AC**
-1. **Given** I select **Deposit** and asset STAR/FZ/PT, **when** I confirm, **then** a deposit reference and QR (internal transfer instruction) are shown.  
-2. **Given** a valid incoming credit is detected (admin or workers), **when** reconciliation runs, **then** a credit **JournalEntry** posts to my available balance.  
-3. **Given** deposit is reversed by mistake, **when** staff corrects, **then** a compensating entry is written with audit.
+1. **Given** a valid request `{userId, currency, amount, reason, ttl}`, **when** I call `POST /internal/v1/holds`, **then** a `Hold` is created with `status=active` and amount moved from `available` → `onHold` in the ledger.  
+2. **Given** insufficient funds, **when** hold is attempted, **then** `409 insufficient_funds` is returned and no journal is posted.  
+3. **Given** TTL expiry, **when** hold expires unused, **then** it is **voided** automatically and funds return to `available`.
 
-- **Crypto UX:** show how to get STAR/FZ/PT, fees are **0** internal; warnings about scams.  
-- **Metering:** free; not billed.  
-- **Cross‑Service:** Admin/Workers reconciliation job.  
-- **Observability:** `deposit_pending`, `deposit_posted`, age > SLA alert.
-
-**Feature B2: External withdrawal (future on‑chain for USDT; off‑chain for MVP)**
-**Story B2.1** — *As a user, I want to withdraw to my wallet/exchange with transparent fees and confirmations.*  
+**Feature B2: Settle hold (win/loss/split)**
+**Story B1.2** — *As the outcome authority (PlayHub game, Escrow arbiter, Funding finalizer), I want to settle holds so that winners receive funds and losers forfeit.*  
 **AC**
-1. **Given** I have the **Investor** badge (or lower limits), **when** I request withdrawal, **then** limits and KYC are enforced: tiered max per day/month.  
-2. **Given** address and chain provided, **when** validation fails (format/chain mismatch), **then** I see inline errors and cannot submit.  
-3. **Given** OTP/2FA enabled, **when** I confirm, **then** a **payout request** enters `pending_review` (MVP off‑chain).  
-4. **Given** reviewer approves, **when** workers execute, **then** available balance decreases, status `completed`, receipt issued.  
-5. **Given** on‑chain failure (future), **when** transaction fails or under‑funded gas, **then** status `failed` with reason; funds auto‑reversed.
+1. **Given** `status=active`, **when** `POST /internal/v1/settlements` with `{holdId, outcome: win|loss|split, payouts[], feeBps}` succeeds, **then** the ledger posts journals to move funds accordingly; `settlementId` is returned.  
+2. **Given** split outcomes (e.g., Escrow 70/30), **when** provided, **then** multiple payout rows are posted atomically.  
+3. **Given** idem replay, **when** settlement retried, **then** the same `settlementId` is returned; no duplicate payouts.
 
-- **Badges:** **Investor** required for higher limits; **Unverified** users capped.  
-- **Metering:** **Free tier** 2 withdrawals/month; overage fee in FZ/PT (Epic E).  
-- **Data:** `Payout(id, dest, chainId, amount, fee, status)`.  
-- **Cross‑Service:** Identity (badge), Admin (review), Workers (execution), Price (fee est.).  
-- **Security:** manual approval threshold; two‑person approval for large amounts.  
-- **Localization:** fee and ETA in user currency with **GMT+7** timestamps.
-
-**Feature B3: Convert balances (FX)**
-**Story B3.1** — *As a user, I want to convert between STAR, FZ, and PT (and USDT later) so that I can pay for features.*  
-**AC**
-1. **Given** I choose `from=FZ, to=PT, amount`, **when** I preview, **then** the quote uses **Price Service** TWAP with spread and taxes (from Config).  
-2. **Given** I accept the quote, **when** conversion posts, **then** two **JournalEntry** rows move funds; receipt minted.  
-3. **Given** quote expires (t seconds), **when** I attempt to confirm, **then** I’m asked to refresh the quote.  
-4. **Given** idem replay, **when** request repeats, **then** same conversion id returned.
-
-- **Metering:** **Free tier** up to **N conversions/month**; overage charged in target asset (or FZ/PT).  
-- **Cross‑Service:** Price Service, Config, Admin.  
-- **Performance:** p95 quote < 150 ms; rate limit per user to avoid abuse.
+**Feature B3: Platform rake / fee capture**
+**Story B1.3** — *As the platform, I want to capture a fee (e.g., **7%** CFB rake) so that revenue is booked consistently.*  
+**AC:** fee debited from pot at settlement; credited to `PlatformRevenue` account; memo includes `sourceService` and `roomId|contractId`.
 
 ---
 
-### Epic C — Rewards & Credits
+### Epic C — Credits, Debits & Rewards
 
-**Feature C1: Campaign rewards and airdrop credits**
-**Story C1.1** — *As a user, I want to receive STAR/FZ/PT rewards from campaigns so that I can spend them across the app.*  
+**Feature C1: Credit user/org balances (rewards, refunds, airdrops)**
+**Story C1.1** — *As Campaigns/Funding/Admin, I want to credit accounts so that users receive rewards and refunds.*  
 **AC**
-1. **Given** Campaigns posts a reward to Payhub (`/internal/v1/credits`), **when** payload signature and quota validated, **then** a credit posts to my balance.  
-2. **Given** duplicate reward id, **when** request repeats, **then** idempotent 200 with same credit id.  
-3. **Given** fraud suspicion, **when** risk flags trigger, **then** reward lands in `pending_review` until staff decision.
+1. **Given** a valid credit request with idem key, **when** `POST /internal/v1/credits` is called, **then** the ledger posts a journal to increase `available` and returns a `receiptId`.  
+2. **Given** budget shortfall for org funding (optional reservation), **when** credit is requested, **then** `402 payment_required` or `awaiting_budget` is returned with retry guidance.  
+3. **Given** compliance holds, **when** account is flagged, **then** credit posts to `pending` balance until review.
 
-- **Metering:** free to users; Campaigns org pays per credit event beyond allowance.  
-- **Data:** `Credit(id, campaignId, asset, amount, status)`; `JournalEntry` credit.  
-- **Cross‑Service:** Campaigns Service, Admin, Workers.
+**Feature C2: Debit (service charges, overage)**
+**Story C1.2** — *As a service, I want to debit for overage so that metered usage is monetized.*  
+**AC:** `POST /internal/v1/debits` with idem key; balance checks; receipt; failure → `402 payment_required` and service should throttle.
 
 ---
 
-### Epic D — Statements, Invoices & Receipts
+### Epic D — Conversions & Quotes (FX)
 
-**Feature D1: Downloadable statements**
-**Story D1.1** — *As a user, I want monthly statements so that I can reconcile my activity.*  
+**Feature D1: Quote and confirm conversion**
+**Story D1.1** — *As a user, I want to convert between **STAR/FZ/PT/USDT** so that I can pay in my preferred currency.*  
 **AC**
-1. **Given** month selection, **when** I generate, **then** a statement aggregates ledger entries with opening/closing balances and exports as PDF/CSV.  
-2. **Given** timezone set, **when** timestamps are rendered, **then** they appear in **GMT+7** in the document.
+1. **Given** I request `POST /v1/conversions/quote { from, to, amountFrom }`, **when** **Price Service** returns TWAP/spot, **then** I get `quoteId`, `rate`, `expiresAt`, and fees.  
+2. **Given** I confirm within `expiresAt`, **when** I `POST /v1/conversions/confirm { quoteId }`, **then** funds move atomically (debit from → credit to).  
+3. **Given** expiry or price drift beyond tolerance, **when** I confirm, **then** `409 quote_expired` is returned and a new quote is suggested.
 
-**Feature D2: Receipts for operations**
-**Story D2.1** — *As a user, I want receipts for holds, settlements, conversions, and withdrawals so that I have proof.*  
-**AC:** receipts include hash of ledger rows, idem key, and signature; available for download and via email/Telegram message.
+- **Crypto UX:** show network fees for USDT chain when withdrawing later; decimals and rounding per currency.  
+- **Metering:** `conversion.quote.read` and `conversion.confirm.write` billed per user.
 
 ---
 
-### Epic E — Quotas, Pricing & Overage (FZ/PT)
+### Epic E — Deposits & Withdrawals (On‑chain USDT + Off‑chain STAR/FZ/PT)
 
-**Feature E1: Withdrawal quota & fees**
-**Story E1.1** — *As a user, I want **2 free** withdrawals per month and pay a per‑withdrawal fee in **FZ/PT** thereafter.*  
+**Feature E1: Deposit USDT (on‑chain)**
+**Story E1.1** — *As a user, I want to deposit **USDT** so that I can fund my balance.*  
 **AC**
-1. **Given** `free_limit=2` and `price=p` per withdrawal, **when** `used ≤ 2`, **then** I’m charged `0` and meter updates.  
-2. **Given** `used > 2`, **when** I submit, **then** Payhub prompts to pay in **FZ/PT**; on success, the withdrawal proceeds; on failure, request is blocked and meter not incremented.  
-3. **Given** I have prepaid credits, **when** I exceed the limit, **then** the fee deducts from the balance first.  
-4. **Given** dunning rules, **when** payment fails repeatedly, **then** further withdrawals are throttled/suspended.
+1. **Given** I select a network (e.g., Tron/Ethereum), **when** I request a deposit address, **then** a unique address is shown with risk warning and min amount; address is bound to my account.  
+2. **Given** I send funds, **when** the transaction reaches **N confirmations**, **then** Workers recognize it, credit **USDT** to my `available`, and issue a receipt.  
+3. **Given** low amount < min or wrong network, **when** detected, **then** status `under_minimum` or `unsupported_network`; support path provided.
 
-**Feature E2: Conversion quota**
-**Story E2.1** — *As a user, I want up to **N** conversions/month free and pay per extra conversion in **FZ/PT**.*  
-**AC** mirror E1 with `metric=conversion.count.monthly`.
-
-**Feature E3: Service‑to‑service holds quota**
-**Story E3.1** — *As a service owner, I want **100 free** holds/month with overage billed in **FZ/PT** to my org account.*  
+**Feature E2: Withdraw USDT (on‑chain)**
+**Story E1.2** — *As a user, I want to withdraw **USDT** to my wallet so that I can self‑custody.*  
 **AC**
-1. **Given** PlayHub exceeds free hold limit, **when** it calls `/internal/v1/holds`, **then** Payhub charges the org’s Payhub account before accepting.  
-2. **Given** org account lacks FZ/PT, **when** overage charge fails, **then** request is rejected with `payment_required` and guidance to top up.
+1. **Given** sufficient available balance and KYC level, **when** I submit `{network, address, amount}`, **then** a `WithdrawalRequest` is created `pending_review` or `queued`.  
+2. **Given** risk checks (velocity, sanctions, address risk), **when** flagged, **then** status `on_hold` and compliance review required.  
+3. **Given** approval, **when** hot wallet signs and broadcasts, **then** `txHash` is stored; final status `paid` after confirmations; fees debited separately.  
+4. **Given** idem replay, **when** same key used, **then** the same `withdrawalId` is returned.
 
-- **Data:** `Meter(orgId, metric, periodStart, used)`, `Invoice`, `Receipt`.  
-- **Cross‑Service:** Admin (pricing), Config (limits), Workers (dunning & reminders).
+**Feature E3: STAR/FZ/PT deposits/withdrawals (off‑chain)**
+**Story E1.3** — *As a user, I want to move **STAR/FZ/PT** within the platform so that I can use them across services.*  
+**AC:** deposits are typically credits from services (Campaigns/Funding/Trading); withdrawals are internal transfers to other users/orgs or redemption endpoints; external chain bridges are future scope.
 
 ---
 
-### Epic F — Fraud, Risk & Compliance
+### Epic F — Payouts & Treasury
 
-**Feature F1: Risk rules and freezes**
-**Story F1.1** — *As a risk analyst, I want to apply rules that automatically freeze accounts or transactions to reduce loss.*  
+**Feature F1: Project treasury settlement**
+**Story F1.1** — *As Funding, I want to settle sale proceeds to a project treasury account so that projects are paid accurately.*  
 **AC**
-1. **Given** velocity or blacklist triggers, **when** rule matches, **then** account state becomes `suspended`, pending staff review.  
-2. **Given** a freeze, **when** a hold/withdrawal is attempted, **then** operation is blocked with reason and audit.  
-3. **Given** manual override, **when** staff unfreezes, **then** state returns to `active` with audit entry.
+1. **Given** Funding finalize, **when** it calls settlements with treasury `orgAccountId`, **then** the full pot is credited minus platform fees, with receipt.  
+2. **Given** multi‑currency sales, **when** configured, **then** optional auto‑conversion occurs into the treasury’s primary currency at confirm time.
 
-**Feature F2: Badge/KYC gating for higher limits**
-**Story F2.1** — *As a user, I want higher deposit/withdrawal limits unlocked by **Investor** badge.*  
-**AC:** Identity introspection required; stale cache max 60s; failure → default to lowest safe limits.
+**Feature F2: Game/CFB payouts**
+**Story F1.2** — *As PlayHub, I want pot payouts and rake capture so that matches/bets settle fairly.*  
+**AC:** split payouts supported; 7% rake example captured; receipts attached to `roomId`/`betId` and emitted as events.
 
 ---
 
-### Epic G — Observability & SLOs
+### Epic G — Webhooks & Events
 
-**Feature G1: Metrics, logs, traces**
-**Story G1.1** — *As SRE, I want clear telemetry so that I can spot issues early.*  
+**Feature G1: Outgoing webhooks**
+**Story G1.1** — *As a consuming service, I want webhooks for settlements, credits, and withdrawals so that I can update my state.*  
 **AC**
-1. **Given** each operation, **when** it completes, **then** increments counters (`journal_write_ok`, `hold_ok`, `withdraw_ok`) and histograms (`latency_ms`).  
-2. **Given** errors, **when** specific codes occur (409, 422, 429), **then** logs include `requestId`, `idemKey`, `accountId`, redacted PII.  
-3. **Given** SLOs, **when** burn rate exceeds threshold, **then** Alertmanager pages the on‑call.
+1. **Given** I register a webhook with secret, **when** events occur, **then** Payhub delivers signed payloads with retries and DLQ on repeated failure.  
+2. **Given** rate limits, **when** exceeded, **then** exponential backoff and `retry-after` headers apply.
 
-- **SLOs:** ledger write availability 99.95%; p95 API latency < 120 ms; reconciliation delay < 15 min.  
-- **Security:** redact addresses and PII in logs; signed receipts.
+**Feature G2: Incoming signed calls (S2S)**
+**Story G1.2** — *As Payhub, I want to accept only signed internal calls so that only trusted services can move funds.*  
+**AC:** JWT with service audience + HMAC of body; mismatch → `401/403`.
+
+---
+
+### Epic H — Quotas, Pricing & Overage (FZ/PT)
+
+**Feature H1: Free limits & paid overage**
+**Story H1.1** — *As a user/service, I want **free** usage up to limits and pay **FZ/PT** beyond them.*  
+**AC**
+1. **Given** admin sets `free_limit_transfers/day`, `free_limit_conversions/day`, `free_limit_withdrawals/month`, **when** my usage ≤ free limit, **then** no charge; meter updates.  
+2. **Given** I exceed a limit, **when** I continue, **then** I’m prompted to pay in **FZ/PT** (user) or org is charged (service).  
+3. **Given** prepaid balance or coupon, **when** charges occur, **then** deductions use prepaid first.  
+4. **Given** repeated payment failure, **when** dunning flows trigger, **then** my non‑essential actions are throttled until resolved.
+
+- **Meter Keys:** `transfer.create.day`, `conversion.confirm.day`, `withdrawal.create.month`, `webhook.deliver.day` (per org).  
+- **Cross‑Service:** **Config/Admin** for pricing; **Workers** for dunning and reminders.
+
+---
+
+### Epic I — Roles, Permissions, Badges & KYC
+
+**Feature I1: Badge/KYC gates**
+**Story I1.1** — *As a platform, I want to gate high‑risk actions so that compliance is maintained.*  
+**AC**
+1. **Given** withdrawals over threshold or cumulative exposures, **when** user lacks **Investor** (or KYC L2) badge, **then** `403 badge_required` with CTA.  
+2. **Given** expired/suspended badge, **when** mutation attempted, **then** blocked with reason; audit written.  
+3. **Given** active badge, **when** action succeeds, **then** `badgeId` recorded in audit and receipt.
+
+**Feature I2: Roles**
+**Story I1.2** — *As an operator, I want roles so that duties are separated.*  
+**AC:** roles include `treasury_admin` (hot wallet ops), `compliance_officer`, `auditor` (read‑only), `service_consumer`, `user`.
 
 ---
 
 ## End‑to‑End Scenarios
 
-### Scenario 1 — PlayHub match hold → settle (winner takes all)
-**Preconditions:** Two users with ≥100 FZ, **Investor** badge required by PlayHub for stakes ≥ threshold.  
-**Flow (PlayHub ↔ Payhub):**
-1. PlayHub calls `POST /internal/v1/holds` for both players (100 FZ each).  
-2. Both holds succeed → room created → match plays.  
-3. Game reports winner to PlayHub → PlayHub calls `POST /internal/v1/settlements { outcome: win }` with both `holdId`s.  
-4. Payhub moves **200 FZ** from holds to winner available; **7% rake** applied if configured; receipts issued.  
-**Alternates:** hold fails → PlayHub rejects matchmaking; network retry with idem key; partial failure → settlement retries idempotently.
+### Scenario 1 — PlayHub match settle with 7% rake
+**Preconditions:** Two players each hold 100 FZ; PlayHub created holds; winner determined.  
+**Steps:** PlayHub calls settlement → Payhub moves 200 FZ pot: 186 FZ to winner, 14 FZ to `PlatformRevenue` (7%); receipts emitted; PlayHub updates UI.  
+**Errors:** settlement retry with idem → same `settlementId`; ledger invariant failure → alert + rollback.
 
-### Scenario 2 — Funding purchase hold → capture
-**Pre:** User has ≥ amount in FZ/PT; **Investor** badge required by Funding for sale tier.  
-**Flow:** Funding creates hold → on finalize/cutoff, Funding settles `win` to treasury account; updates purchase; receipts stored.  
-**Errors:** idem replay returns same ids; insufficient funds → Funding surfaces error.
+### Scenario 2 — Funding finalize to treasury (with auto‑convert)
+**Pre:** Sale in FZ, treasury prefers USDT.  
+**Steps:** Funding finalizes → Payhub converts FZ→USDT via Quote→Confirm → credits org treasury → receipt sent.  
+**Edge:** quote expired → Funding re‑quotes; conversion failure → transaction aborted and retried.
 
-### Scenario 3 — Withdrawal over free limit with FZ payment
-**Pre:** User already made 2 free withdrawals this month.  
-**Flow:** User requests 3rd withdrawal → Payhub prompts fee in FZ/PT → user pays **in‑app** using available FZ → fee captured → withdrawal proceeds after review.  
-**Edge:** fee capture fails → withdrawal blocked; dunning reminder.
+### Scenario 3 — USDT deposit & STAR purchase
+**Pre:** User requests TRON address; sends 50 USDT.  
+**Steps:** Workers see N confirmations → credit 50 USDT → user converts to STAR → buys in Funding.  
+**Edge:** under‑min deposit → support flow; wrong chain → flagged and held for manual review.
 
-### Scenario 4 — Conversion with quote expiry
-**Pre:** User wants to convert 500 FZ → PT.  
-**Flow:** Quote fetched from Price (T seconds validity) → user confirms after expiry → Payhub rejects with `quote_expired` → new quote required.  
-**Edge:** TWAP provider down → `service_unavailable` with retry‑after.
+### Scenario 4 — Escrow split settlement
+**Pre:** Dispute resolved 70/30.  
+**Steps:** Escrow calls split settlement → Payhub pays 70% to buyer, 30% to seller (or vice versa) and captures fee; idempotent; receipts recorded.
 
----
-
-## Data Touchpoints (Entities & Constraints)
-- **Account**(id, userId, state).  
-- **Balance**(accountId, asset, available, held, pending) — per asset.  
-- **JournalEntry**(entryId, debitAccount, creditAccount, asset, amount, refType, refId, requestId, createdAt) — **double‑entry** invariant: sum(debits)=sum(credits).  
-- **Hold**(holdId, accountId, asset, amount, status: active|settled|voided|expired).  
-- **Settlement**(settlementId, holdId, outcome, feeBps, receiptId).  
-- **Payout**(id, accountId, asset, amount, dest, chainId, fee, status).  
-- **Credit/Reward**(id, campaignId, asset, amount, status).  
-- **Meter/Invoice/Receipt** entities per billing spec.
-
-**Idempotency:** All POSTs accept `Idempotency-Key`; ledger writes carry `requestId` and hash to detect duplicates.  
-**Referential constraints:** Journal rows must reference a concrete business object (hold/settlement/conversion/payout).
+### Scenario 5 — Overage charge for conversions
+**Pre:** Free daily conversions 10; user confirms 11th.  
+**Steps:** Payhub checks meter → charges **p FZ/PT** → if paid, conversion proceeds; if not, `402 payment_required` and conversion blocked.
 
 ---
 
-## Roles & Permissions
-- **User:** manage own balances, deposits, withdrawals, conversions.  
-- **Service (PlayHub/Funding/Escrow/Campaigns):** S2S holds/settlements/credits.  
-- **Admin/Finance:** reviews payouts, configures fees/limits/prices, views audits, performs adjustments.  
-- **Risk:** freeze/unfreeze and rule management.
+## Data Touchpoints & Events
+
+**Entities**
+- `Account`, `JournalRow`, `Journal`, `Receipt`  
+- `Hold(id, accountId, amount, currency, status, ttl)`  
+- `Settlement(id, holdId, outcome, payouts[], feeBps)`  
+- `Credit/Debit`  
+- `ConversionQuote(id, from, to, amountFrom, rate, expiresAt, tolerance)` → `Conversion(id, quoteId, status)`  
+- `DepositAddress`, `DepositReceipt`  
+- `WithdrawalRequest(id, network, address, amount, fee, status)`  
+- `Meter`, `Invoice`, `Coupon`
+
+**Events & Topics**
+- `payhub.hold.created/settled/voided`  
+- `payhub.settlement.completed`  
+- `payhub.credit.credited/failed`  
+- `payhub.conversion.quoted/confirmed/expired`  
+- `payhub.withdrawal.requested/approved/paid/failed`  
+- Billing: `billing.overage.charged/failed`
+
+**Idempotency & Constraints**
+- All mutating POSTs require `Idempotency-Key`.  
+- Journals are append‑only; monthly closing snapshots; reconciliation jobs.  
+- Withdrawals one‑at‑a‑time per user to avoid nonce collisions; backoff on chain RPC errors.
 
 ---
 
 ## Security & Compliance
-- Auth: user session JWT and service JWT; mTLS optional.  
-- AuthZ: capability checks per route; org scoping for services.  
-- PII/KYC: rely on Identity for KYC; store minimal payout PII with encryption.  
-- Anti‑fraud: velocity/risk rules; manual approvals; two‑person controls.  
-- Receipts signed; configs verified (signed via tg‑miniapp‑config).
+- **AuthN/Z:** user session JWT; service JWT with mTLS for S2S; signed webhooks (HMAC + timestamp).  
+- **Secrets:** hot wallet keys in HSM/KMS; addresses derived per user; address books whitelisted per withdrawal.  
+- **AML/Risk:** sanctions checks, address risk scoring, velocity limits; freeze via Identity hook.  
+- **PII:** only necessary KYC linkages; encrypt at rest; strict access controls.  
+- **Audit:** append‑only with hash chain; export for external auditors.
 
 ---
 
 ## Localization & Timezones
-- UI shows fees, ETAs, and statements localized; timestamps in **GMT+7**.  
-- API returns ISO 8601 UTC; client formats per locale.
+- All user‑visible times shown in **GMT+7**; API operates in UTC.  
+- i18n for receipts, error codes, and prompts.
 
 ---
 
-## Observability & Rate Limits
-- Per‑route counters and histograms.  
-- Rate limits per user/org/service; 429 includes backoff hints.  
-- Alerts: ledger mismatch, reconciliation delay, payout stuck, provider down.
+## Observability & SLOs
+- Metrics: ledger post latency, hold/settlement success rate, conversion quote latency, withdrawal confirmation time.  
+- Alerts: ledger invariant failures, webhook DLQ, chain RPC error spikes.  
+- **SLOs:** journal post p95 < 50 ms; hold create p95 < 80 ms; withdrawal broadcast within 5 min p95.
+
+---
+
+## Mandatory Badge/KYC & Quota Blocks
+
+### A) Badge acquisition (template)
+**Story**: As a user, I want to request the **Investor** badge so that I can **withdraw above threshold** and access higher limits.  
+**AC (GWT)** — follow global template (KYC, wallet proof, approval, expiry).
+
+### B) Gated action enforcement (template)
+**Story**: As a user, I want to **withdraw or perform high‑value transfers** only if I hold the **Investor** badge.  
+**AC (GWT)** — block when missing/expired; record `badgeId` on success.
+
+### C) Free limit & paid overage (template)
+**Story**: As a user/service, I want to use **Payhub** within free limits, and pay in **FZ/PT** if I exceed them.  
+**AC (GWT)** — apply to `transfer.create.day`, `conversion.confirm.day`, `withdrawal.create.month`, `webhook.deliver.day` as defined above.
 
 ---
 
 ## Assumptions & Open Questions
-1. Exact free limits and prices (Admin/Config).  
-2. Rake logic for PlayHub settlements (global vs per‑game override).  
-3. On‑chain USDT rollout timeline; chain list; bridge and gas strategy.  
-4. Refund policy and chargeback handling for off‑chain deposits.  
-5. Maximum holds per account and hold TTL.
+1. Final list of supported USDT networks and confirmation counts.  
+2. Exact tolerance for conversion quote drift and FX fee structure.  
+3. Whether platform rake (e.g., 7% CFB) is inclusive or extra and who pays.  
+4. Daily/monthly free limits and prices (from Config/Admin).  
+5. Policy for under‑min or wrong‑chain deposits (auto‑return vs manual case).
 
