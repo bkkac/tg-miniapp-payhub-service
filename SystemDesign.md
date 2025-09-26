@@ -1,11 +1,13 @@
 
-Repo: tg-miniapp-payhub-service
-File: SystemDesign.md
-SHA-256: 38989e94d8db7de6225a2c8108f6255207c760ac3da0a0149e65e40750fcaa81
-Bytes: 20271
-Generated: 2025-09-26 14:09 GMT+7
-Inputs: Old SystemDesign.md (ref), UserStories.md (authoritative), API Spec Guide, Data Schema Guide
-Change Basis: Updated to reflect latest UserStories
+# Repo: tg-miniapp-payhub-service
+**File:** SystemDesign.md  
+**SHA-256:** 38989e94d8db7de6225a2c8108f6255207c760ac3da0a0149e65e40750fcaa81  
+**Bytes:** 20271  
+**Generated:** 2025-09-26 14:09 GMT+7  
+**Inputs:** Old SystemDesign.md (ref), UserStories.md (authoritative), API Spec Guide, Data Schema Guide  
+**Change Basis:** Updated to reflect latest UserStories  
+
+> High‑level architectural blueprint for the **Payhub Service**. Payhub is the **single source of truth for balances** in platform currencies (**USDT, FUZE, STAR, FZ, PT** in MVP). It provides internal primitives: **Accounts, Ledger, Holds, Settlements, Conversions, Deposits, Withdrawals**. No games or business rules live here. Domain services (PlayHub, Funding, Campaigns, Escrow) call Payhub to **lock value** and **settle outcomes**. End users never call Payhub directly — WebApp uses domain services; Admin uses a BFF.
 
 ---
 
