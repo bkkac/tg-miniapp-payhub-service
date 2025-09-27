@@ -135,7 +135,7 @@ erDiagram
     numeric available
     numeric held
     datetime updatedAt
-    string "unique(accountId, asset)" "unique"
+    string accountId "unique"
   }
 
   JOURNAL_TX {
@@ -302,7 +302,7 @@ erDiagram
     datetime windowStart
     datetime windowEnd
     numeric amountUsed
-    string "unique(accountId, metric, windowStart)" "unique"
+    string accountId "unique"
   }
 
   FEE_SCHEDULE {
