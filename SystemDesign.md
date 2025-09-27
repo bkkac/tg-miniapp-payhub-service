@@ -119,16 +119,16 @@ erDiagram
   CONVERSION_QUOTE ||--|| CONVERSION_ORDER : "consumes"
   OUTBOX_EVENT ||--o{ WEBHOOK_DELIVERY : "delivers"
 
-  ACCOUNT {{
+  ACCOUNT {
     uuid id PK
     uuid userId FK
     uuid orgId FK "nullable"
     string status "enum: Active|Suspended|Closed"
     datetime createdAt
     datetime updatedAt
-  }}
+  }
 
-  BALANCE {{
+  BALANCE {
     uuid id PK
     uuid accountId FK
     string asset "enum: STAR|FZ|PT|USDT"
@@ -136,18 +136,18 @@ erDiagram
     numeric held
     datetime updatedAt
     string "unique(accountId, asset)" "unique"
-  }}
+  }
 
-  JOURNAL_TX {{
+  JOURNAL_TX {
     uuid id PK
     string type "enum: Deposit|Withdrawal|Hold|Capture|Release|Conversion|Invoice|Refund|Transfer|Adjustment"
     string status "enum: Posted|Reversed"
     string correlationId
     datetime postedAt
     bigint journalSeq "index"
-  }}
+  }
 
-  LEDGER_ENTRY {{
+  LEDGER_ENTRY {
     uuid id PK
     uuid journalTxId FK
     uuid accountId FK
@@ -156,9 +156,9 @@ erDiagram
     string narrative
     string eventId
     datetime postingTs
-  }}
+  }
 
-  HOLD {{
+  HOLD {
     uuid id PK
     uuid accountId FK
     string purpose "enum: Match|Escrow|Funding|Invoice|Other"
@@ -170,9 +170,9 @@ erDiagram
     string idemKey "unique"
     datetime createdAt
     datetime updatedAt
-  }}
+  }
 
-  SETTLEMENT {{
+  SETTLEMENT {
     uuid id PK
     string purpose "enum: Match|Escrow|Funding|Invoice|Other"
     string purposeId
@@ -181,9 +181,9 @@ erDiagram
     string receiptsHash
     datetime createdAt
     datetime updatedAt
-  }}
+  }
 
-  DEPOSIT_INTENT {{
+  DEPOSIT_INTENT {
     uuid id PK
     uuid accountId FK
     string asset
@@ -194,9 +194,9 @@ erDiagram
     string status "enum: Pending|Monitoring|Credited|Expired|Canceled"
     datetime createdAt
     datetime updatedAt
-  }}
+  }
 
-  DEPOSIT_TX {{
+  DEPOSIT_TX {
     uuid id PK
     uuid intentId FK
     string txHash "unique"
@@ -205,9 +205,9 @@ erDiagram
     string status "enum: Pending|Confirmed|Reorged"
     datetime detectedAt
     datetime creditedAt "nullable"
-  }}
+  }
 
-  WITHDRAWAL_REQUEST {{
+  WITHDRAWAL_REQUEST {
     uuid id PK
     uuid accountId FK
     string asset
@@ -219,9 +219,9 @@ erDiagram
     string idemKey "unique"
     datetime createdAt
     datetime updatedAt
-  }}
+  }
 
-  WITHDRAWAL_TX {{
+  WITHDRAWAL_TX {
     uuid id PK
     uuid requestId FK
     string txHash "unique"
@@ -229,9 +229,9 @@ erDiagram
     string status "enum: Pending|Confirmed|Reorged|Failed"
     datetime broadcastAt
     datetime confirmedAt "nullable"
-  }}
+  }
 
-  CONVERSION_QUOTE {{
+  CONVERSION_QUOTE {
     uuid id PK
     uuid accountId FK
     string fromAsset
@@ -246,9 +246,9 @@ erDiagram
     string status "enum: Active|Expired|Revoked"
     string idemKey "unique"
     datetime createdAt
-  }}
+  }
 
-  CONVERSION_ORDER {{
+  CONVERSION_ORDER {
     uuid id PK
     uuid quoteId FK
     string status "enum: Succeeded|Failed"
@@ -257,9 +257,9 @@ erDiagram
     numeric feeAmount
     uuid journalTxId FK
     datetime executedAt
-  }}
+  }
 
-  INVOICE {{
+  INVOICE {
     uuid id PK
     uuid payeeAccountId FK
     uuid payerAccountId FK "nullable"
@@ -270,9 +270,9 @@ erDiagram
     jsonb meta
     datetime createdAt
     datetime updatedAt
-  }}
+  }
 
-  REFUND {{
+  REFUND {
     uuid id PK
     uuid invoiceId FK "nullable"
     uuid accountId FK
@@ -282,9 +282,9 @@ erDiagram
     string status "enum: Issued|Failed"
     uuid journalTxId FK
     datetime createdAt
-  }}
+  }
 
-  LIMIT_PROFILE {{
+  LIMIT_PROFILE {
     uuid id PK
     uuid accountId FK
     string tier "enum: Tier0|Tier1|Tier2|Tier3"
@@ -293,9 +293,9 @@ erDiagram
     numeric conversionExposureLimit
     datetime lastResetAt
     datetime updatedAt
-  }}
+  }
 
-  USAGE_COUNTER {{
+  USAGE_COUNTER {
     uuid id PK
     uuid accountId FK
     string metric "enum: WithdrawDaily|WithdrawMonthly|ConversionExposure"
@@ -303,16 +303,16 @@ erDiagram
     datetime windowEnd
     numeric amountUsed
     string "unique(accountId, metric, windowStart)" "unique"
-  }}
+  }
 
-  FEE_SCHEDULE {{
+  FEE_SCHEDULE {
     uuid id PK
     string version
     jsonb rules
     datetime publishedAt
-  }}
+  }
 
-  OUTBOX_EVENT {{
+  OUTBOX_EVENT {
     uuid id PK
     string eventName
     jsonb payload
@@ -320,27 +320,27 @@ erDiagram
     integer attempts
     datetime createdAt
     datetime updatedAt
-  }}
+  }
 
-  WEBHOOK_DELIVERY {{
+  WEBHOOK_DELIVERY {
     uuid id PK
     uuid outboxId FK
     string destination
     string status "enum: Pending|Succeeded|Failed"
     integer attempts
     datetime nextAttemptAt
-  }}
+  }
 
-  IDEMPOTENCY_KEY {{
+  IDEMPOTENCY_KEY {
     uuid id PK
     string scope
     string key "unique"
     uuid targetId FK "nullable"
     datetime storedAt
     datetime expiresAt
-  }}
+  }
 
-  RECEIPT {{
+  RECEIPT {
     uuid id PK
     string kind "enum: Hold|Settlement|Deposit|Withdrawal|Conversion|Invoice|Refund"
     string refId
@@ -348,7 +348,7 @@ erDiagram
     numeric total
     string currency
     datetime createdAt
-  }}
+  }
 ```
 ---
 
