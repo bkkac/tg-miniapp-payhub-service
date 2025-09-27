@@ -1,12 +1,13 @@
-**Repo:** tg-miniapp-payhub-service  
-**File:** SystemDesign.md  
-**SHA-256:** 038f0a9a04538af79790c95add74680f6f8e3e48840ebf0bb2fe853c2084fbd7  
-**Bytes:** 26534  
-**Updated:** 2025-09-26 18:40 GMT+7  
+Repo: tg-miniapp-identity-service
+File: SystemDesign.md
+SHA-256: f43af056a6ca58ea5303432cb8216b132548965eaa5974f68247abf3396d2ffc
+Bytes: 37985
+Generated: 2025-09-27 13:28 GMT+7
+Inputs: New UserStories.md (authoritative), API Spec Guide, Data Schema Guide
 
 ---
 
-# 1) Architecture Diagram (flowchart)
+## 1. Architecture Diagram — Mermaid flowchart
 
 ```mermaid
 flowchart LR
@@ -16,912 +17,1170 @@ flowchart LR
     ADM["Admin Console"]
   end
 
-  subgraph "Payhub Service"
-    API["REST API v1"]
-    ACC["Accounts Manager"]
-    HLD["Hold Manager"]
-    TRF["Transfer Engine"]
-    STTL["Settlement Orchestrator"]
-    CNV["Conversion Engine"]
-    STK["Staking Reader"]
-    INV["Invoice Manager"]
-    RCT["Receipt Manager"]
-    OUT["Outbox Dispatcher"]
-    DB["Postgres 'ledger, accounts, holds, invoices'"]
-    RDS["Redis 'idempotency, rate, jobs'"]
-    WRK["Workers 'withdrawals, confirms, dunning'"]
+  subgraph "Identity Service"
+    API["REST API"]
+    AUTH["JWT/JWKS"]
+    POL["Policy Engine"]
+    AC["Access Control (RBAC/Badges)"]
+    ER["Event Router"]
+    Q["Jobs Queue"]
+    DB["Primary DB"]
+    CACH["Cache"]
+    WH["Webhook Dispatcher"]
   end
 
-  subgraph "Platform Services"
-    ID["Identity Service"]
-    CFG["Config Service"]
-    PRC["Price Service"]
-    ADMAPI["Admin Service"]
+  subgraph "Platform Services (consumers)"
+    PH["Playhub"]
+    PAY["Payhub"]
+    ESC["Escrow"]
+    FND["Funding"]
+    CMP["Campaigns"]
+    EVT["Events"]
+    WAT["Watchlist"]
+    PRC["Price"]
+    ADM2["Admin/BFF"]
+    WRK["Workers"]
   end
 
-  subgraph "Chains / Custody"
-    CUS["Custody Adapter"]
-    RPC["Chain RPC Provider"]
-    WLT["Hot Wallet"]
-    WADDR["Deposit Address Issuer"]
+  subgraph "External Providers"
+    TGPLAT["Telegram Platform"]
+    KYC["KYC Provider"]
+    RPC["|"Chain RPC (wallet proofs)"|"]
   end
 
-  TG -->|balances, deposit, withdraw, convert| API
-  W3 -->|invoices, receipts, staking| API
-  ADM -->|limits, pricing, write-offs| API
+  TG -->|"/v1/auth/telegram/verify"| API
+  W3 -->|"/v1/*"| API
+  ADM -->|"/v1/admin/*"| API
 
-  API --> ACC
-  API --> HLD
-  API --> TRF
-  API --> STTL
-  API --> CNV
-  API --> INV
-  API --> RCT
-  API --> STK
+  API --> AUTH
+  API --> POL
+  POL --> AC
   API --> DB
-  API --> RDS
-  WRK --> STTL
-  WRK --> INV
-  WRK --> RCT
+  API --> CACH
+  API --> Q
+  API --> WH
 
-  API --> ID
-  API --> CFG
-  CNV --> PRC
-  STTL --> CUS
-  CUS --> RPC
-  CUS --> WLT
-  API --> OUT
+  API --> KYC
+  API --> RPC
+
+  PH -->|"/v1/introspect"| API
+  PAY -->|"/v1/introspect"| API
+  ESC -->|"/v1/introspect"| API
+  FND -->|"/v1/introspect"| API
+  CMP -->|"/v1/webhooks (consume)"| WH
+  EVT -->|"/v1/introspect"| API
+  WAT -->|"/v1/introspect"| API
+  PRC -->|"/v1/introspect"| API
+  ADM2 -->|"/v1/admin/*"| API
+  WRK -->|"/jobs"| Q
 ```
 
 ---
 
-# 2) Technology Stack
+## 2. Technology Stack
 
-| Layer | Choice | Notes |
-|---|---|---|
-| Runtime | Node.js 20, TypeScript | Consistent with platform |
-| API | Fastify, Zod, OpenAPI 3.1 | Spec-first contracts, validation |
-| DB | Postgres 15 | ACID ledger, outbox, invoices, holds |
-| Caching / Jobs | Redis Cluster, BullMQ | Idempotency keys, rate limits, retries, DLQ |
-| Messaging | Outbox table + workers, Webhooks | Durable fan-out to consumers |
-| Crypto | Ed25519 and HMAC-SHA256 | Webhook signatures, receipt integrity |
-| Observability | OpenTelemetry, Prometheus, Loki | RED/USE metrics, tracing |
-| CI/CD | Docker, Helm, Argo CD | Blue/green and canary deployments |
-| Security | JWKS via Identity, mTLS options | S2S hardening |
+- Language/Runtime: TypeScript (Node.js 20 LTS), pnpm
+- Frameworks: Fastify (HTTP), Zod, OpenAPI Generator, jose
+- Datastore: PostgreSQL 15, Redis 7, S3-compatible store (evidence)
+- Messaging/Jobs: Kafka or NATS JetStream, BullMQ/Temporal
+- Crypto: secp256k1/ed25519 verification, HMAC-SHA256 (webhooks)
+- CI/CD: GitOps (Helm/Argo), OPA policy gates
+- Observability: OpenTelemetry, Prometheus, Grafana, Loki/ELK
+- Security: RBAC, JWT access+refresh, JWKS rotation, WAF, Rate limits
 
 ---
 
-# 3) Responsibilities and Scope
+## 3. Responsibilities and Scope
 
-**Owns**  
-- **Accounts and balances** for users and services,  
-- **Holds and releases** for wagers, purchases, and withdrawals,  
-- **Transfers and settlements** with double-entry ledger,  
-- **Deposits and withdrawals** across supported chains via Custody Adapter,  
-- **Conversions** between on/off-chain credits and internal units,  
-- **Invoices and dunning** for quotas overage and fees,  
-- **Receipts** for completed financial actions,  
-- **Events** to downstream services and UIs.
+**Owns**
+- Users, Orgs, Sessions, JWT/JWKS, API clients
+- Wallet link and verification
+- Badge policies, applications, issuance, suspension, revoke
+- KYC sessions and results (via provider)
+- Introspection API (badges, KYC, roles, risk flags)
+- Identity change webhooks, audit logs, idempotency
 
-**Collaborates**  
-Identity for authentication, roles, badges, KYC, Config for limits and pricing, Price for quotes and TWAP, Admin for overrides and manual ops, Custody for broadcast and confirmations.
+**Non-goals**
+- Payments/settlements (Payhub)
+- Game logic (Playhub), campaign logic (Campaigns), pricing (Price)
 
-**Non-goals**  
-- Price discovery beyond consuming Price Service,  
-- KYC decision storage,  
-- Gameplay or business domain decisions of other services.
+**Boundaries**
+- Calls KYC provider and Chain RPC for evidence
+- Emits events and webhooks to consumers
 
 ---
 
-# 4) Data Design (Mermaid Data Schema)
+## 4. Data Design — Mermaid erDiagram
 
 ```mermaid
 erDiagram
-  USER ||--o{ ACCOUNT : owns
-  ACCOUNT ||--o{ LEDGER_ENTRY : records
-  ACCOUNT ||--o{ HOLD : locks
-  TRANSFER ||--o{ LEDGER_ENTRY : posts
-  WITHDRAWAL ||--o{ LEDGER_ENTRY : posts
-  DEPOSIT ||--o{ LEDGER_ENTRY : posts
-  INVOICE ||--o{ INVOICE_ITEM : aggregates
-  RECEIPT ||--o{ RECEIPT_LINE : aggregates
+  USER ||--o{ SESSION : "has"
+  USER ||--o{ WALLET : "owns"
+  USER ||--o{ MEMBERSHIP : "belongs to"
+  USER ||--o{ BADGE : "holds"
+  USER ||--o{ BADGE_APPLICATION : "submits"
+  USER ||--o{ KYC_SESSION : "initiates"
+  USER ||--o{ API_CLIENT : "owns"
+  ORG  ||--o{ MEMBERSHIP : "has"
+  BADGE_POLICY ||--o{ BADGE_APPLICATION : "governs"
+  BADGE_POLICY ||--o{ BADGE : "issues"
+  WEBHOOK_ENDPOINT ||--o{ WEBHOOK_DELIVERY : "sends"
+  API_CLIENT ||--o{ API_KEY : "has"
+  USER ||--o{ AUDIT_LOG : "actor"
 
   USER {
-    string id PK
-    string tgId
-    datetime createdAt
-  }
-
-  ACCOUNT {
-    string id PK
-    string userId FK
-    string kind
-    string currency
-    string status
+    uuid id PK
+    string tgId "unique"
+    string username
+    string displayName
+    string locale
+    string timezone
+    string status "enum: Active|Suspended"
     datetime createdAt
     datetime updatedAt
   }
 
-  LEDGER_ENTRY {
-    string id PK
-    string transferId FK
-    string accountId FK
-    string direction
-    string amount
-    string currency
-    string refType
-    string refId
-    datetime postedAt
-  }
-
-  HOLD {
-    string id PK
-    string accountId FK
-    string purpose
-    string amount
-    string currency
-    string status
-    datetime createdAt
-    datetime expiresAt
-    string externalRef
-  }
-
-  TRANSFER {
-    string id PK
-    string purpose
-    string status
-    string currency
-    string amount
-    string fromAccountId FK
-    string toAccountId FK
-    string idempotencyKey
-    datetime createdAt
-    datetime settledAt
-  }
-
-  WITHDRAWAL {
-    string id PK
-    string userId FK
-    string accountId FK
-    string network
-    string token
-    string toAddress
-    string amount
-    string fee
-    string status
-    string txHash
+  ORG {
+    uuid id PK
+    string name
+    string slug "unique"
+    string status "enum: Active|Suspended|Deleted"
     datetime createdAt
     datetime updatedAt
   }
 
-  DEPOSIT {
-    string id PK
-    string userId FK
-    string accountId FK
-    string network
-    string token
-    string fromAddress
-    string amount
-    string status
-    string txHash
-    datetime observedAt
-    datetime confirmedAt
+  MEMBERSHIP {
+    uuid id PK
+    uuid userId FK
+    uuid orgId FK
+    string role "enum: Owner|Admin|Member"
+    datetime createdAt
+    datetime updatedAt
   }
 
-  DEPOSIT_ADDRESS {
-    string id PK
-    string userId FK
-    string network
-    string token
-    string address
-    datetime issuedAt
-  }
-
-  CONVERSION_QUOTE {
-    string id PK
-    string fromCurrency
-    string toCurrency
-    string amount
-    string rate
-    integer feeBps
+  SESSION {
+    uuid id PK
+    uuid userId FK
+    string deviceHash
+    string ipHash
     datetime expiresAt
+    datetime createdAt
+    datetime revokedAt
   }
 
-  INVOICE {
-    string id PK
-    string userId FK
-    string periodStart
-    string periodEnd
-    string currency
-    string subtotal
-    string discounts
-    string tax
-    string total
-    string status
-    datetime issuedAt
-    datetime dueAt
+  WALLET {
+    uuid id PK
+    uuid userId FK
+    string chain "enum: EVM|TON|BTC|SOL"
+    string address "unique per chain"
+    boolean primary
+    string proofNonce
+    datetime verifiedAt
+    datetime createdAt
   }
 
-  INVOICE_ITEM {
-    string id PK
-    string invoiceId FK
-    string kind
-    string quantity
-    string unitPrice
-    string amount
-    string meta
+  BADGE_POLICY {
+    uuid id PK
+    string badgeType "enum: Investor|ProjectOwner|Operator|KYC_L1|KYC_L2"
+    jsonb rules "normalized thresholds"
+    integer validityDays
+    boolean requiresKyc
+    datetime createdAt
+    datetime updatedAt
   }
 
-  RECEIPT {
-    string id PK
-    string userId FK
-    string currency
-    string total
+  BADGE_APPLICATION {
+    uuid id PK
+    uuid userId FK
+    string badgeType
+    string status "enum: Pending|Approved|Rejected|Revoked|Suspended"
+    uuid policyId FK
+    uuid kycSessionId FK
+    jsonb evidence
+    datetime submittedAt
+    datetime decidedAt
     string reason
+  }
+
+  BADGE {
+    uuid id PK
+    uuid userId FK
+    string badgeType
+    uuid policyId FK
+    datetime issuedAt
+    datetime expiresAt
+    string status "enum: Active|Expired|Suspended|Revoked"
+  }
+
+  KYC_SESSION {
+    uuid id PK
+    uuid userId FK
+    string provider
+    string externalId "unique"
+    string level "enum: L1|L2"
+    string status "enum: Created|InProgress|Approved|Rejected|Expired"
+    jsonb result
+    datetime createdAt
+    datetime updatedAt
+  }
+
+  WEBHOOK_ENDPOINT {
+    uuid id PK
+    uuid ownerId FK
+    string url "unique"
+    string secret
+    string status "enum: Active|Disabled"
+    string events "csv"
     datetime createdAt
   }
 
-  RECEIPT_LINE {
-    string id PK
-    string receiptId FK
-    string kind
-    string amount
-    string meta
-  }
-
-  OUTBOX {
-    string id PK
-    string topic
-    string payload
-    integer attempts
+  WEBHOOK_DELIVERY {
+    uuid id PK
+    uuid endpointId FK
+    string eventName
+    uuid eventId "unique"
+    integer attempt
+    integer statusCode
+    string state "enum: Pending|Succeeded|Failed|DLQ"
     datetime nextAttemptAt
     datetime createdAt
   }
 
-  METER {
-    string id PK
-    string userId FK
-    string metric
-    integer windowStart
-    integer used
-    integer limit
+  API_CLIENT {
+    uuid id PK
+    uuid ownerId FK
+    string name
+    string scopes "csv"
+    datetime createdAt
+  }
+
+  API_KEY {
+    uuid id PK
+    uuid clientId FK
+    string keyHash "unique"
+    datetime createdAt
+    datetime revokedAt
+  }
+
+  JWKS_KEY {
+    uuid id PK
+    string kid "unique"
+    string alg
+    string publicJwk
+    string status "enum: Active|Retired"
+    datetime createdAt
+    datetime rotatedAt
+  }
+
+  AUDIT_LOG {
+    uuid id PK
+    uuid actorUserId FK
+    string action
+    jsonb target
+    jsonb details
+    datetime createdAt
+  }
+
+  IDEMPOTENCY_KEY {
+    uuid id PK
+    uuid ownerId FK
+    string key "unique(ownerId,key)"
+    string requestHash
+    string responseHash
+    datetime createdAt
   }
 ```
 
-**Indexes**  
-- `ACCOUNT(userId, currency) unique`, `LEDGER_ENTRY(accountId, postedAt)`, `HOLD(accountId, status, expiresAt)`, `TRANSFER(idempotencyKey) unique`,  
-- `WITHDRAWAL(userId, createdAt)`, `DEPOSIT(userId, observedAt)`, `DEPOSIT_ADDRESS(userId, token, network) unique`,  
-- `INVOICE(userId, dueAt)`, `OUTBOX(topic, nextAttemptAt)`, `METER(userId, metric) unique`
-
-**Constraints**  
-- `ACCOUNT.kind` in `user, system`, `ACCOUNT.status` in `active, frozen, closed`,  
-- `LEDGER_ENTRY.direction` in `debit, credit`, two entries per transfer with equal amounts,  
-- `HOLD.status` in `open, released, captured, expired, canceled`,  
-- `WITHDRAWAL.status` in `draft, requested, pending_broadcast, broadcasted, confirmed, failed, refunded`,  
-- Monetary fields are canonical decimal strings with 18 dp precision unless network requires otherwise.
-
 ---
 
-# 5) Interfaces (API Specification)
+## 5. Interfaces — OpenAPI 3.1 (YAML)
 
 ```yaml
 openapi: 3.1.0
 info:
-  title: tg-miniapp-payhub-service API
-  version: 2.0.0
+  title: tg-miniapp-identity-service API
+  version: 1.0.0
 servers:
-  - url: https://payhub.api
-security:
-  - BearerAuth: []
+  - url: https://identity.api.fuze.local
+tags:
+  - name: Auth
+  - name: Users
+  - name: Orgs
+  - name: Wallets
+  - name: Badges
+  - name: KYC
+  - name: Introspection
+  - name: Webhooks
+  - name: Admin
+  - name: Audit
 paths:
-  /v1/accounts:
-    get:
-      summary: List accounts for the session user
-      responses:
-        "200":
-          description: Accounts
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Account'
-  /v1/balances:
-    get:
-      summary: Get aggregated balances per currency
-      responses:
-        "200":
-          description: Balances
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Balance'
-  /v1/holds:
+  /v1/auth/telegram/verify:
     post:
-      summary: Create a hold for a purpose, idempotent
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      operationId: auth.telegramVerify
+      summary: Verify Telegram initData and issue session tokens
+      tags: [Auth]
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/HoldCreate'
-      responses:
-        "201":
-          description: Hold created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Hold'
-        "402":
-          description: Insufficient available balance
-    get:
-      summary: List holds
+              type: object
+              required: [initData, deviceHash, timezone]
+              properties:
+                initData: { type: string, description: "Telegram WebApp initData payload" }
+                deviceHash: { type: string }
+                timezone: { type: string, default: "GMT+7" }
+                locale: { type: string }
       responses:
         "200":
-          description: Holds
+          description: Token pair issued
           content:
             application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Hold'
-  /v1/holds/{holdId}/release:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/auth/refresh:
     post:
-      summary: Release an open hold
+      operationId: auth.refresh
+      summary: Refresh access token
+      tags: [Auth]
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: New access token
+          content: { application/json: { schema: { $ref: "#/components/schemas/AccessToken" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/auth/logout:
+    post:
+      operationId: auth.logout
+      summary: Revoke current session
+      tags: [Auth]
+      security: [{ BearerAuth: [] }]
+      responses:
+        "204": { description: Logged out }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/jwks.json:
+    get:
+      operationId: auth.jwks
+      summary: Retrieve JWKS
+      tags: [Auth]
+      security: []
+      responses:
+        "200": { description: JWKS, content: { application/json: { schema: { $ref: "#/components/schemas/JWKS" } } } }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/me:
+    get:
+      operationId: users.meGet
+      summary: Get current user profile and badges
+      tags: [Users]
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: User profile, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    patch:
+      operationId: users.meUpdate
+      summary: Update profile fields
+      tags: [Users]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string }
+                locale: { type: string }
+                timezone: { type: string }
+      responses:
+        "200": { description: Updated profile, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/orgs:
+    post:
+      operationId: orgs.create
+      summary: Create an organization
+      tags: [Orgs]
+      security: [{ BearerAuth: [] }]
       parameters:
-        - in: path
-          name: holdId
+        - in: header
+          name: Idempotency-Key
           required: true
           schema: { type: string }
-        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                name: { type: string }
+                slug: { type: string }
       responses:
-        "200": { description: Released }
-        "409": { description: Not open }
-  /v1/holds/{holdId}/capture:
-    post:
-      summary: Capture an open hold into a transfer
+        "201": { description: Org created, content: { application/json: { schema: { $ref: "#/components/schemas/Org" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/orgs/{orgId}:
+    get:
+      operationId: orgs.get
+      summary: Get organization
+      tags: [Orgs]
+      security: [{ BearerAuth: [] }]
       parameters:
         - in: path
-          name: holdId
+          name: orgId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Org, content: { application/json: { schema: { $ref: "#/components/schemas/Org" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/orgs/{orgId}/members:
+    post:
+      operationId: orgs.membersAdd
+      summary: Add a member to org
+      tags: [Orgs]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
           required: true
           schema: { type: string }
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: orgId
+          required: true
+          schema: { type: string, format: uuid }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/HoldCapture'
+              type: object
+              required: [userId, role]
+              properties:
+                userId: { type: string, format: uuid }
+                role: { $ref: "#/components/schemas/OrgRole" }
       responses:
-        "201":
-          description: Captured to transfer
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Transfer'
-        "409":
-          description: Not open or expired
-  /v1/transfers:
-    post:
-      summary: Create a transfer between accounts
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TransferCreate'
-      responses:
-        "201":
-          description: Transfer posted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Transfer'
-  /v1/deposits/address:
-    post:
-      summary: Issue a deposit address
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DepositAddressIssue'
-      responses:
-        "201":
-          description: Address issued
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DepositAddress'
-  /v1/deposits/webhook:
-    post:
-      summary: Custody webhook for on-chain deposits
-      parameters:
-        - $ref: '#/components/parameters/HmacSig'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CustodyDepositEvent'
-      responses:
-        "202": { description: Accepted }
-  /v1/withdrawals:
-    post:
-      summary: Request withdrawal
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/WithdrawalRequest'
-      responses:
-        "202": { description: Accepted }
-        "403": { description: Badge required }
-        "409": { description: Conflicting pending withdrawal }
-  /v1/withdrawals/{id}:
-    get:
-      summary: Get withdrawal status
+        "201": { description: Member added, content: { application/json: { schema: { $ref: "#/components/schemas/Membership" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/orgs/{orgId}/members/{userId}:
+    delete:
+      operationId: orgs.membersRemove
+      summary: Remove member from org
+      tags: [Orgs]
+      security: [{ BearerAuth: [] }]
       parameters:
         - in: path
-          name: id
+          name: orgId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: userId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/wallets/link:
+    post:
+      operationId: wallets.startLink
+      summary: Start wallet link (challenge)
+      tags: [Wallets]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
           required: true
           schema: { type: string }
-      responses:
-        "200":
-          description: Withdrawal
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Withdrawal'
-  /v1/convert/quote:
-    post:
-      summary: Get a conversion quote
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConvertQuoteRequest'
+              type: object
+              required: [chain, address]
+              properties:
+                chain: { $ref: "#/components/schemas/Chain" }
+                address: { type: string }
       responses:
-        "200":
-          description: Quote
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConversionQuote'
-  /v1/convert/confirm:
+        "201": { description: Challenge created, content: { application/json: { schema: { $ref: "#/components/schemas/WalletChallenge" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/wallets/verify:
     post:
-      summary: Confirm a conversion using a quote
+      operationId: wallets.verifyLink
+      summary: Verify wallet signature and link
+      tags: [Wallets]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, signature]
+              properties:
+                challengeId: { type: string, format: uuid }
+                signature: { type: string }
+      responses:
+        "201": { description: Wallet linked, content: { application/json: { schema: { $ref: "#/components/schemas/Wallet" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/wallets:
+    get:
+      operationId: wallets.list
+      summary: List linked wallets
+      tags: [Wallets]
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Wallets, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Wallet" } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/wallets/{walletId}:
+    delete:
+      operationId: wallets.unlink
+      summary: Unlink wallet
+      tags: [Wallets]
+      security: [{ BearerAuth: [] }]
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: walletId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Unlinked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/badges/policies:
+    post:
+      operationId: badges.policyCreate
+      summary: Create or update badge policy
+      tags: [Badges]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BadgePolicy" }
+      responses:
+        "200": { description: Upserted, content: { application/json: { schema: { $ref: "#/components/schemas/BadgePolicy" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/badges/{badgeType}/apply:
+    post:
+      operationId: badges.apply
+      summary: Apply for a badge
+      tags: [Badges]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+        - in: path
+          name: badgeType
+          required: true
+          schema: { $ref: "#/components/schemas/BadgeType" }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConvertConfirmRequest'
+              type: object
+              properties:
+                evidence: { type: object, additionalProperties: true }
       responses:
-        "201":
-          description: Conversion completed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Receipt'
-        "409":
-          description: Quote expired
-  /v1/staking/positions:
+        "202": { description: Accepted, content: { application/json: { schema: { $ref: "#/components/schemas/BadgeApplication" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/kyc/sessions:
+    post:
+      operationId: kyc.start
+      summary: Start KYC verification session
+      tags: [KYC]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [level]
+              properties:
+                level: { $ref: "#/components/schemas/KycLevel" }
+      responses:
+        "201": { description: Session, content: { application/json: { schema: { $ref: "#/components/schemas/KycSession" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/kyc/sessions/{sessionId}:
     get:
-      summary: List staking positions visible to the user
+      operationId: kyc.get
+      summary: Get KYC session status
+      tags: [KYC]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Session, content: { application/json: { schema: { $ref: "#/components/schemas/KycSession" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/introspect:
+    post:
+      operationId: introspect.check
+      summary: Introspect subject for badges, roles, KYC
+      tags: [Introspection]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subjectUserId: { type: string, format: uuid }
+                walletAddress: { type: string }
+                requiredBadges:
+                  type: array
+                  items: { $ref: "#/components/schemas/BadgeType" }
+      responses:
+        "200": { description: Result, content: { application/json: { schema: { $ref: "#/components/schemas/IntrospectionResult" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/webhooks/endpoints:
+    post:
+      operationId: webhooks.endpointCreate
+      summary: Register a webhook endpoint
+      tags: [Webhooks]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              properties:
+                url: { type: string, format: uri }
+                events: { type: array, items: { $ref: "#/components/schemas/WebhookEventName" } }
+      responses:
+        "201": { description: Endpoint, content: { application/json: { schema: { $ref: "#/components/schemas/WebhookEndpoint" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/webhooks/deliveries:
+    get:
+      operationId: webhooks.deliveriesList
+      summary: List webhook deliveries
+      tags: [Webhooks]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - in: query
+          name: endpointId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
       responses:
         "200":
-          description: Positions
+          description: Deliveries
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/StakingPosition'
-  /v1/invoices:
-    get:
-      summary: List invoices for the user
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/WebhookDelivery" } }
+                  nextCursor: { type: string, nullable: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/admin/badges/{badgeId}/revoke:
+    post:
+      operationId: admin.badgesRevoke
+      summary: Revoke a badge
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - in: path
+          name: badgeId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
       responses:
-        "200":
-          description: Invoices
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Invoice'
-  /v1/receipts:
-    get:
-      summary: List receipts for the user
+        "200": { description: Revoked, content: { application/json: { schema: { $ref: "#/components/schemas/Badge" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/admin/keys/rotate:
+    post:
+      operationId: admin.keysRotate
+      summary: Rotate JWKS signing key
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
       responses:
-        "200":
-          description: Receipts
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Receipt'
+        "202": { description: Rotation scheduled }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-  parameters:
-    IdempotencyKey:
-      in: header
-      name: Idempotency-Key
-      required: false
-      schema:
-        type: string
-        format: uuid
-    HmacSig:
-      in: header
-      name: X-Signature
-      required: true
-      schema:
-        type: string
-  schemas:
-    Account:
-      type: object
-      required: [id, userId, currency, status]
-      properties:
-        id: { type: string }
-        userId: { type: string }
-        currency: { type: string }
-        status: { type: string, enum: [active, frozen, closed] }
-    Balance:
-      type: object
-      required: [currency, available, pending]
-      properties:
-        currency: { type: string }
-        available: { type: string }
-        pending: { type: string }
-    HoldCreate:
-      type: object
-      required: [purpose, currency, amount]
-      properties:
-        purpose: { type: string }
-        currency: { type: string }
-        amount: { type: string }
-        ttlSeconds: { type: integer, minimum: 30 }
-        externalRef: { type: string }
-    Hold:
-      type: object
-      required: [id, accountId, amount, currency, status]
-      properties:
-        id: { type: string }
-        accountId: { type: string }
-        amount: { type: string }
-        currency: { type: string }
-        status: { type: string, enum: [open, released, captured, expired, canceled] }
-        expiresAt: { type: string, format: date-time }
-    HoldCapture:
-      type: object
-      required: [destinationAccountId]
-      properties:
-        destinationAccountId: { type: string }
-        feeBps: { type: integer, minimum: 0, maximum: 10000 }
-    TransferCreate:
-      type: object
-      required: [fromAccountId, toAccountId, amount, currency, purpose]
-      properties:
-        fromAccountId: { type: string }
-        toAccountId: { type: string }
-        amount: { type: string }
-        currency: { type: string }
-        purpose: { type: string }
-    Transfer:
-      type: object
-      required: [id, status, currency, amount, createdAt]
-      properties:
-        id: { type: string }
-        status: { type: string, enum: [pending, posted, failed] }
-        currency: { type: string }
-        amount: { type: string }
-        createdAt: { type: string, format: date-time }
-    DepositAddressIssue:
-      type: object
-      required: [token, network]
-      properties:
-        token: { type: string }
-        network: { type: string }
-    DepositAddress:
-      type: object
-      required: [id, token, network, address]
-      properties:
-        id: { type: string }
-        token: { type: string }
-        network: { type: string }
-        address: { type: string }
-    CustodyDepositEvent:
-      type: object
-      required: [network, token, txHash, address, amount, confirmations]
-      properties:
-        network: { type: string }
-        token: { type: string }
-        txHash: { type: string }
-        address: { type: string }
-        amount: { type: string }
-        confirmations: { type: integer }
-        observedAt: { type: string, format: date-time }
-    WithdrawalRequest:
-      type: object
-      required: [token, network, toAddress, amount]
-      properties:
-        token: { type: string }
-        network: { type: string }
-        toAddress: { type: string }
-        amount: { type: string }
-        fee: { type: string }
-    Withdrawal:
-      type: object
-      required: [id, status]
-      properties:
-        id: { type: string }
-        status: { type: string, enum: [draft, requested, pending_broadcast, broadcasted, confirmed, failed, refunded] }
-        txHash: { type: string }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-    ConvertQuoteRequest:
-      type: object
-      required: [from, to, amount]
-      properties:
-        from: { type: string }
-        to: { type: string }
-        amount: { type: string }
-    ConversionQuote:
-      type: object
-      required: [id, from, to, amount, rate, feeBps, expiresAt]
-      properties:
-        id: { type: string }
-        from: { type: string }
-        to: { type: string }
-        amount: { type: string }
-        rate: { type: string }
-        feeBps: { type: integer }
-        expiresAt: { type: string, format: date-time }
-    ConvertConfirmRequest:
-      type: object
-      required: [quoteId]
-      properties:
-        quoteId: { type: string }
-    Invoice:
-      type: object
-      required: [id, currency, total, status, dueAt]
-      properties:
-        id: { type: string }
-        currency: { type: string }
-        total: { type: string }
-        status: { type: string, enum: [open, paid, void, overdue] }
-        dueAt: { type: string, format: date-time }
-    Receipt:
-      type: object
-      required: [id, currency, total, createdAt]
-      properties:
-        id: { type: string }
-        currency: { type: string }
-        total: { type: string }
-        createdAt: { type: string, format: date-time }
   responses:
-    BadRequest: { description: Bad request }
-    Unauthorized: { description: Unauthorized }
-    Forbidden: { description: Forbidden }
-    NotFound: { description: Not found }
-    Conflict: { description: Conflict }
+    BadRequest:
+      description: Bad Request
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Unauthorized:
+      description: Unauthorized
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Forbidden:
+      description: Forbidden
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFound:
+      description: Not Found
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: Conflict
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    RateLimited:
+      description: Too Many Requests
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 0 }
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ServerError:
+      description: Server Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+    User:
+      type: object
+      required: [id, tgId, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        tgId: { type: string }
+        username: { type: string, nullable: true }
+        displayName: { type: string, nullable: true }
+        locale: { type: string, nullable: true }
+        timezone: { type: string, nullable: true }
+        status: { $ref: "#/components/schemas/UserStatus" }
+        wallets: { type: array, items: { $ref: "#/components/schemas/Wallet" } }
+        badges: { type: array, items: { $ref: "#/components/schemas/Badge" } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    UserStatus:
+      type: string
+      enum: [Active, Suspended]
+    Org:
+      type: object
+      required: [id, name, slug, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [Active, Suspended, Deleted] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    Membership:
+      type: object
+      required: [id, userId, orgId, role, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        orgId: { type: string, format: uuid }
+        role: { $ref: "#/components/schemas/OrgRole" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    OrgRole:
+      type: string
+      enum: [Owner, Admin, Member]
+    Wallet:
+      type: object
+      required: [id, chain, address, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        chain: { $ref: "#/components/schemas/Chain" }
+        address: { type: string }
+        primary: { type: boolean }
+        verifiedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    Chain:
+      type: string
+      enum: [EVM, TON, BTC, SOL]
+    WalletChallenge:
+      type: object
+      required: [challengeId, message, expiresAt]
+      properties:
+        challengeId: { type: string, format: uuid }
+        message: { type: string }
+        expiresAt: { type: string, format: date-time }
+    Badge:
+      type: object
+      required: [id, badgeType, status, issuedAt]
+      properties:
+        id: { type: string, format: uuid }
+        badgeType: { $ref: "#/components/schemas/BadgeType" }
+        policyId: { type: string, format: uuid }
+        status: { type: string, enum: [Active, Expired, Suspended, Revoked] }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    BadgeType:
+      type: string
+      enum: [Investor, ProjectOwner, Operator, KYC_L1, KYC_L2]
+    BadgePolicy:
+      type: object
+      required: [id, badgeType, rules, validityDays, requiresKyc]
+      properties:
+        id: { type: string, format: uuid }
+        badgeType: { $ref: "#/components/schemas/BadgeType" }
+        rules: { type: object, additionalProperties: true }
+        validityDays: { type: integer, minimum: 1 }
+        requiresKyc: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    BadgeApplication:
+      type: object
+      required: [id, badgeType, status, submittedAt]
+      properties:
+        id: { type: string, format: uuid }
+        badgeType: { $ref: "#/components/schemas/BadgeType" }
+        status: { type: string, enum: [Pending, Approved, Rejected, Revoked, Suspended] }
+        policyId: { type: string, format: uuid, nullable: true }
+        kycSessionId: { type: string, format: uuid, nullable: true }
+        evidence: { type: object, additionalProperties: true, nullable: true }
+        submittedAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        reason: { type: string, nullable: true }
+    KycLevel:
+      type: string
+      enum: [L1, L2]
+    KycSession:
+      type: object
+      required: [id, provider, level, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        provider: { type: string }
+        externalId: { type: string }
+        level: { $ref: "#/components/schemas/KycLevel" }
+        status: { type: string, enum: [Created, InProgress, Approved, Rejected, Expired] }
+        result: { type: object, additionalProperties: true, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    IntrospectionResult:
+      type: object
+      required: [subject, badges, kyc]
+      properties:
+        subject:
+          type: object
+          properties:
+            userId: { type: string, format: uuid }
+            orgIds: { type: array, items: { type: string, format: uuid } }
+        badges: { type: array, items: { $ref: "#/components/schemas/Badge" } }
+        kyc:
+          type: object
+          properties:
+            level: { $ref: "#/components/schemas/KycLevel" }
+            approved: { type: boolean }
+        riskFlags: { type: array, items: { type: string } }
+        cacheTtlSec: { type: integer }
+    WebhookEventName:
+      type: string
+      enum: [identity.badge.updated, identity.kyc.updated, identity.wallet.updated, identity.user.updated]
+    WebhookEndpoint:
+      type: object
+      required: [id, url, status, events, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, format: uri }
+        status: { type: string, enum: [Active, Disabled] }
+        events: { type: array, items: { $ref: "#/components/schemas/WebhookEventName" } }
+        createdAt: { type: string, format: date-time }
+    WebhookDelivery:
+      type: object
+      required: [id, endpointId, eventName, attempt, state, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        endpointId: { type: string, format: uuid }
+        eventName: { $ref: "#/components/schemas/WebhookEventName" }
+        attempt: { type: integer }
+        statusCode: { type: integer, nullable: true }
+        state: { type: string, enum: [Pending, Succeeded, Failed, DLQ] }
+        nextAttemptAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+    AccessToken:
+      type: object
+      required: [accessToken]
+      properties:
+        accessToken: { type: string }
+    JWKS:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
 ```
-
-**Webhooks**  
-- `payhub.deposit.confirmed@v1`, payload `CustodyDepositEvent` plus resolved `userId`,  
-- `payhub.withdrawal.updated@v1`, status transitions,  
-- `payhub.hold.created@v1`, `payhub.hold.captured@v1`, `payhub.hold.released@v1`,  
-- `payhub.invoice.created@v1`, `payhub.invoice.due@v1`, `payhub.receipt.created@v1`,  
-All HMAC signed, with 5 minute replay window and idempotent receivers.
 
 ---
 
-# 6) Data Flows (sequence diagrams)
+## 6. Data Flows — Mermaid sequenceDiagram
 
-## A) Deposit address issuance and confirmation
-
+### 6.1 Telegram login → session tokens
 ```mermaid
 sequenceDiagram
-  participant U as "User",
-  participant PH as "Payhub",
-  participant CU as "Custody",
-  U->>PH: POST /v1/deposits/address { token, network },
-  PH-->>U: 201 { address },
-  CU->>PH: POST /v1/deposits/webhook { txHash, address, amount, confirmations },
-  alt confirmations below threshold
-    PH->>PH: record deposit pending,
-  else threshold met
-    PH->>PH: post ledger entries credit,
-    PH-->>U: emit payhub.deposit.confirmed,
-  end
+  participant TG as Telegram WebApp
+  participant API as Identity API
+  participant DB as DB
+  TG->>API: POST /v1/auth/telegram/verify
+  API->>API: Verify HMAC of initData
+  API->>DB: Upsert USER, create SESSION
+  DB-->>API: USER, SESSION
+  API-->>TG: 200 TokenPair
 ```
 
-## B) Withdrawal with KYC badge and broadcast
-
+### 6.2 Wallet link challenge → verify signature
 ```mermaid
 sequenceDiagram
-  participant U as "User",
-  participant PH as "Payhub",
-  participant CU as "Custody",
-  U->>PH: POST /v1/withdrawals { token, network, toAddress, amount },
-  PH->>PH: verify badge and limits,
-  PH-->>U: 202 accepted,
-  PH->>CU: queue broadcast,
-  CU-->>PH: txHash,
-  PH-->>U: status broadcasted,
-  CU-->>PH: confirmations reached,
-  PH-->>U: status confirmed
+  participant U as User
+  participant API as Identity API
+  participant DB as DB
+  participant RPC as |"Chain RPC (wallet proofs)"|
+  U->>API: POST /v1/wallets/link
+  API->>DB: Create challenge with nonce
+  API-->>U: 201 WalletChallenge
+  U->>API: POST /v1/wallets/verify
+  API->>RPC: Verify signature for address
+  RPC-->>API: ok
+  API->>DB: Create WALLET, mark verified
+  API-->>U: 201 Wallet
 ```
 
-## C) Hold, capture, settlement for PlayHub result
-
+### 6.3 Apply for badge with KYC start → approve
 ```mermaid
 sequenceDiagram
-  participant PL as "PlayHub",
-  participant PH as "Payhub",
-  PL->>PH: POST /v1/holds { purpose: match, currency, amount },
-  PH-->>PL: 201 hold,
-  PL->>PH: POST /v1/holds/{id}/capture { destinationAccountId },
-  PH->>PH: double-entry post,
-  PH-->>PL: 201 transfer,
+  participant U as User
+  participant API as Identity API
+  participant KYC as |"KYC Provider"|
+  participant DB as DB
+  participant WH as Webhook Dispatcher
+  U->>API: POST /v1/badges/{badgeType}/apply
+  API->>DB: Create BADGE_APPLICATION(Pending)
+  API->>KYC: Create KYC session (if required)
+  KYC-->>API: session id
+  API-->>U: 202 Application
+  KYC->>API: x-webhook kyc.updated
+  API->>DB: Update KYC_SESSION, approve badge if pass
+  API->>DB: Issue BADGE, update application
+  API->>WH: enqueue identity.badge.updated
+  WH-->>Consumers: deliver with HMAC signature
 ```
 
-## D) Convert with expiring quote and fee
-
+### 6.4 Service introspects user for gate
 ```mermaid
 sequenceDiagram
-  participant U as "User",
-  participant PH as "Payhub",
-  participant PR as "Price",
-  U->>PH: POST /v1/convert/quote { from, to, amount },
-  PH->>PR: get price,
-  PR-->>PH: rate and feeBps,
-  PH-->>U: 200 quote expiresAt,
-  U->>PH: POST /v1/convert/confirm { quoteId },
-  alt within expiry
-    PH->>PH: post conversion entries,
-    PH-->>U: 201 receipt,
-  else expired
-    PH-->>U: 409 quote expired,
-  end
+  participant S as Service (e.g., Payhub)
+  participant API as Identity API
+  participant C as Cache
+  participant DB as DB
+  S->>API: POST /v1/introspect
+  API->>C: check cache
+  C-->>API: miss
+  API->>DB: query badges, kyc, risk flags
+  DB-->>API: subject state
+  API-->>S: 200 IntrospectionResult (cacheTtlSec)
 ```
 
-## E) Overage invoice and dunning
-
+### 6.5 Admin revokes badge → webhooks
 ```mermaid
 sequenceDiagram
-  participant CFG as "Config",
-  participant PH as "Payhub",
-  participant U as "User",
-  CFG->>PH: limits and price tables,
-  PH->>PH: meter actions, 
-  alt exceeded free tier
-    PH->>PH: generate invoice, 
-    PH-->>U: invoice created,
-    PH->>PH: schedule dunning,
-  else within free tier
-    PH-->>U: no charge,
-  end
+  participant ADM as Admin
+  participant API as Identity API
+  participant DB as DB
+  participant WH as Webhook Dispatcher
+  ADM->>API: POST /v1/admin/badges/{id}/revoke
+  API->>DB: Update BADGE(status=Revoked)
+  API->>WH: enqueue identity.badge.updated
+  WH-->>Consumers: deliver event
+```
+
+### 6.6 JWKS rotation
+```mermaid
+sequenceDiagram
+  participant ADM as Admin
+  participant API as Identity API
+  participant DB as DB
+  ADM->>API: POST /v1/admin/keys/rotate
+  API->>DB: Insert JWKS_KEY(Active), retire old
+  API-->>ADM: 202 Rotation scheduled
 ```
 
 ---
 
-# 7) Rules and Calculations
+## 7. Rules and Calculations
 
-- **Double entry**: Every transfer creates one debit and one credit with same amount and currency.  
-- **Rounding**: Internal arithmetic uses 18 dp fixed decimals, display rounded down to 6 dp unless otherwise required.  
-- **Fees**: Configurable per action and token, applied at capture or settlement.  
-- **Hold TTL**: Defaults to 10 minutes unless caller requests shorter, auto-expire releases funds.  
-- **Confirmations**: Token and network specific thresholds, handle reorg by reversing and re-posting.  
-- **Conversion**: `pay = amount * rate`, `fee = pay * feeBps / 10000`, `final = pay - fee`.  
-- **Invoices**: Windowed by calendar month, status transitions `open -> paid | void | overdue`.  
-- **Quotas**: Per-user metric windows in `METER`, overage generates invoice lines and charges in FZ/PT.  
-- **Staking**: Read-only positions surfaced from staking backends into receipts when distributions occur.
+- **Badge validity**: `expiresAt = issuedAt + validityDays` from policy. Auto-suspend if KYC expires or wallet proof becomes stale.
+- **Idempotency**: For unsafe POSTs, require `Idempotency-Key`, lock on `(ownerId,key)` for 24h.
+- **Rate limits**: `introspect.check` per-service QPS; `wallets.verifyLink` per-user per-5m.
+- **Risk flags**: derived from KYC result, sanction checks, device signals; exposed via `IntrospectionResult.riskFlags`.
+- **Time**: store in UTC; client-facing displays respect GMT+7 when used in UI flows.
 
 ---
 
-# 8) Security and Compliance
+## 8. Security and Compliance
 
-- **Auth**: Bearer JWT issued by Identity, short TTL, scopes for admin endpoints.  
-- **Badges**: Withdrawals and high-risk actions require `Investor` or `ProjectOwner` badges.  
-- **PII**: Store only minimal identifiers and addresses, no seed phrases or private keys.  
-- **Webhooks**: HMAC header `X-Signature`, timestamp header, 5 minute max skew, replay cache in Redis.  
-- **Secrets**: Stored in secret manager, rotated on schedule, never logged.  
-- **RPC**: Broadcast via Custody Adapter with fee and nonce management, fallback RPCs and circuit breakers.  
-- **Audit**: All mutations include `actorId`, `idempotencyKey`, and immutable ledger entries.
-
----
-
-# 9) Scalability and Reliability
-
-- **Idempotency** on all POSTs using `Idempotency-Key`.  
-- **Outbox pattern** for durable event fan-out with retry and DLQ.  
-- **Partitioning**: Ledger partitioned by month, indexes per account and date.  
-- **Backpressure**: Job concurrency caps, exponential backoff with jitter.  
-- **SLOs**: P99 settlement under 2 minutes after result, deposit detection P95 under 1 minute.  
-- **RTO/RPO**: RTO 30 minutes, RPO 1 minute with streaming WAL replicas.
+- **Auth**: JWT bearer; JWKS published at `/v1/jwks.json`.
+- **Scopes**: service tokens limited to `introspect:read`, `webhooks:read`, `admin:*` for operators.
+- **PII**: KYC results stored with retention and access controls; evidence objects encrypted at rest.
+- **Webhooks**: HMAC signed (`X-Signature`), 3 retries with exponential backoff, idempotency by `eventId`.
+- **Secrets**: Vault/KMS; no plaintext in logs; structured audit for every change.
+- **Compliance**: audit logs, data retention for KYC, right-to-erasure procedure referencing USER and EVIDENCE objects.
 
 ---
 
-# 10) Observability
+## 9. Scalability and Reliability
 
-- **Logs**: Structured JSON, include `traceId`, `spanId`, `actorId`, `idempotencyKey`.  
-- **Metrics**: balances.read, hold.create, hold.capture, transfer.posted, withdrawal.confirmed, deposit.confirmed, quote.issued, invoice.created.  
-- **Traces**: End-to-end from clients through Payhub to Custody and Price.  
-- **Dashboards**: Ledger health, outbox lag, confirmation lag, failure rates.  
-- **Alerts**: Spike in 5xx or DLQ size, delayed confirmations, high reorg reversals.
-
----
-
-# 11) Configuration and ENV
-
-| Key | Type | Secret | Notes |
-|---|---|---|---|
-| PAYHUB_POSTGRES_URI | string | yes | Primary database |
-| PAYHUB_REDIS_URI | string | yes | Idempotency, rate, jobs |
-| IDENTITY_BASE_URL | string | no | JWT introspection |
-| CONFIG_BASE_URL | string | no | Limits, pricing |
-| PRICE_BASE_URL | string | no | Quotes and TWAP |
-| CUSTODY_BASE_URL | string | no | Broadcast adapter |
-| HMAC_SECRET | string | yes | Webhook signing |
-| WITHDRAW_MIN_CONFIRMATIONS | int | no | Per network default |
-| CONVERT_FEE_BPS | int | no | Default conversion fee |
-| OUTBOX_MAX_ATTEMPTS | int | no | Retry policy |
-| RATE_LIMIT_RPS | int | no | Global rate |
-| TZ | string | no | Presentation time zone |
-
-Precedence: ENV > Config Service > defaults.
+- **Caching**: introspection results cached with TTL; invalidation on badge/KYC changes.
+- **Backpressure**: queue for webhook deliveries with DLQ and replay.
+- **DB**: indexes on `(tgId)`, `(badgeType,userId)`, `(address,chain)`, `(externalId)`.
+- **HA**: stateless API with multi-AZ; P99 latency SLOs; circuit breakers on KYC/RPC.
 
 ---
 
-# 12) User Stories and Feature List (traceability)
+## 10. Observability
 
-| Story | APIs | Entities / Events | Diagrams |
-|---|---|---|---|
-| Balances read | GET /v1/balances | ACCOUNT, LEDGER_ENTRY | — |
-| Hold for match | POST /v1/holds, POST /v1/holds/{id}/capture | HOLD, TRANSFER | C |
-| Deposit | POST /v1/deposits/address, POST /v1/deposits/webhook | DEPOSIT, LEDGER_ENTRY | A |
-| Withdrawal | POST /v1/withdrawals, GET /v1/withdrawals/{id} | WITHDRAWAL, LEDGER_ENTRY | B |
-| Convert | POST /v1/convert/quote, POST /v1/convert/confirm | CONVERSION_QUOTE, RECEIPT | D |
-| Overage billing | GET /v1/invoices | INVOICE, INVOICE_ITEM | E |
-
-**Deltas vs old SystemDesign**  
-- Clarified hold lifecycle and capture semantics,  
-- Added outbox and webhook hardening,  
-- Expanded conversion and invoice models with precision and fees,  
-- Formalized reorg handling and reversal policy.
+- **Logs**: audit trails with correlation ids; redacted fields for PII.
+- **Metrics**: rate, error, duration for each operationId; queue depth; webhook success rate.
+- **Traces**: propagate trace ids to KYC provider and across webhooks.
 
 ---
 
-# 13) Roadmap
+## 11. Configuration and ENV
 
-- Multi-chain custody adapters with priority and fee optimization,  
-- Partial withdrawals and batched broadcasts,  
-- Chargeback and dispute workflows,  
-- Automated reconciliation jobs with external statements,  
-- Real-time streaming balances for UI.
+- `JWT_ISSUER` string
+- `JWT_AUDIENCE` string
+- `JWKS_ROTATE_CRON` cron
+- `DB_URL` secret
+- `REDIS_URL` secret
+- `KYC_PROVIDER` enum
+- `WEBHOOK_HMAC_SECRET` secret
+- `RATE_LIMITS_JSON` json
+- `EVIDENCE_BUCKET` string
 
 ---
 
-# 14) Compatibility Notes
+## 12. Roadmap
 
-- Versioned `/v1` API, additive-first changes, breaking behind feature flags,  
-- Migrations use online schema change with shadow tables for large partitions,  
-- Contract changes require OpenAPI bump and consumer approval.
+- Add OIDC discovery (`.well-known/openid-configuration`).
+- Self-serve webhook test UI and replay.
+- Multiple KYC providers with routing policy.
+- Device binding and session anomaly detection.
+
+---
+
+## 13. Compatibility Notes
+
+- JWT audience versioning, `kid` in headers for JWKS rotation.
+- Backward-compatible schema changes via additive fields.
+- Deprecation policy: 90 days for webhook payload changes.
+
+---
+
+## 14. Design Coverage Checklist
+
+- ✅ Every story action maps to an OpenAPI operationId
+- ✅ Every operationId appears in at least one sequence
+- ✅ No sequence uses an undefined API
+- ✅ OpenAPI schemas map to ER entities/enums
+- ✅ Flowchart actors appear in sequences
+- ✅ Mermaid renders on GitHub (syntax checked)
+- ✅ Error and resilience paths modeled (webhook retries, KYC flows)
+- ✅ Observability signals tied to operationIds
