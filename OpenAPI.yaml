@@ -1,0 +1,714 @@
+# Repo: tg-miniapp-payhub-service
+# File: OpenAPI.yaml
+# SHA-256: 489f07a4a821e25e9858564f9b8c00aa1eb0c80b567d1607a988d8b9d62d229d
+# Bytes: 33735
+# Generated: 2025-09-28 22:49 GMT+7
+# Inputs: UserStories.md (authoritative), SystemDesign.md, API Spec Guide
+openapi: 3.1.0
+info:
+  title: tg-miniapp-payhub-service API
+  version: 1.0.0
+servers:
+  - url: https://payhub.api.fuze.ac
+tags:
+  - name: Accounts
+  - name: Ledger
+  - name: Holds
+  - name: Settlements
+  - name: Deposits
+  - name: Withdrawals
+  - name: Conversions
+  - name: Invoices
+  - name: Admin
+  - name: Webhooks
+security:
+  - BearerAuth: []
+paths:
+  /v1/accounts:
+    post:
+      operationId: accounts.create
+      summary: Create an account for a user or org
+      tags: [Accounts]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              oneOf:
+                - required: [userId]
+                - required: [orgId]
+              properties:
+                userId: { type: string, format: uuid, nullable: true }
+                orgId: { type: string, format: uuid, nullable: true }
+      responses:
+        "201":
+          description: Account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    get:
+      operationId: accounts.list
+      summary: List my accounts
+      tags: [Accounts]
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/accounts/{accountId}/balances:
+    get:
+      operationId: accounts.balances
+      summary: Get balances for an account
+      tags: [Accounts]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Balances
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Balance" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/holds:
+    post:
+      operationId: holds.create
+      summary: Create a hold on funds
+      tags: [Holds]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId, asset, amount, purpose, purposeId]
+              properties:
+                accountId: { type: string, format: uuid }
+                asset: { $ref: "#/components/schemas/Asset" }
+                amount: { type: number, minimum: 0 }
+                purpose: { $ref: "#/components/schemas/HoldPurpose" }
+                purposeId: { type: string }
+                expiresAt: { type: string, format: date-time, nullable: true }
+      responses:
+        "201":
+          description: Hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Hold" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/InsufficientFunds" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    get:
+      operationId: holds.search
+      summary: Search holds
+      tags: [Holds]
+      parameters:
+        - name: accountId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/HoldStatus" }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HoldPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/holds/{holdId}/release:
+    post:
+      operationId: holds.release
+      summary: Release a hold back to available
+      tags: [Holds]
+      parameters:
+        - name: holdId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Release queued }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/settlements:
+    post:
+      operationId: settlements.create
+      summary: Capture one or more holds and issue transfers
+      tags: [Settlements]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose, purposeId, items]
+              properties:
+                purpose: { $ref: "#/components/schemas/HoldPurpose" }
+                purposeId: { type: string }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [holdId, toAccountId, amount]
+                    properties:
+                      holdId: { type: string, format: uuid }
+                      toAccountId: { type: string, format: uuid }
+                      amount: { type: number }
+                rakeBps: { type: number, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "202":
+          description: Settlement queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settlement" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/deposits:
+    post:
+      operationId: deposits.createIntent
+      summary: Create a deposit intent and address
+      tags: [Deposits]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId, asset, network]
+              properties:
+                accountId: { type: string, format: uuid }
+                asset: { $ref: "#/components/schemas/Asset" }
+                network: { $ref: "#/components/schemas/Network" }
+      responses:
+        "201":
+          description: Intent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DepositIntent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/withdrawals:
+    post:
+      operationId: withdrawals.create
+      summary: Request a withdrawal
+      tags: [Withdrawals]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId, asset, network, toAddress, amount]
+              properties:
+                accountId: { type: string, format: uuid }
+                asset: { $ref: "#/components/schemas/Asset" }
+                network: { $ref: "#/components/schemas/Network" }
+                toAddress: { type: string }
+                amount: { type: number, minimum: 0 }
+      responses:
+        "201":
+          description: Withdrawal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WithdrawalRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/withdrawals/{withdrawalId}:
+    delete:
+      operationId: withdrawals.cancel
+      summary: Cancel a withdrawal if not yet broadcast
+      tags: [Withdrawals]
+      parameters:
+        - name: withdrawalId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Canceled }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/conversions/quote:
+    post:
+      operationId: conversions.quote
+      summary: Request a conversion quote
+      tags: [Conversions]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId, from, to, amount]
+              properties:
+                accountId: { type: string, format: uuid }
+                from: { $ref: "#/components/schemas/Asset" }
+                to: { $ref: "#/components/schemas/Asset" }
+                amount: { type: number, minimum: 0 }
+      responses:
+        "201":
+          description: Quote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversionQuote" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "502": { $ref: "#/components/responses/UpstreamUnavailable" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/conversions/execute:
+    post:
+      operationId: conversions.execute
+      summary: Execute a conversion using a valid quote
+      tags: [Conversions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quoteId]
+              properties:
+                quoteId: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversionOrder" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/invoices:
+    post:
+      operationId: invoices.create
+      summary: Create an invoice
+      tags: [Invoices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payeeAccountId, asset, amount]
+              properties:
+                payeeAccountId: { type: string, format: uuid }
+                payerAccountId: { type: string, format: uuid, nullable: true }
+                asset: { $ref: "#/components/schemas/Asset" }
+                amount: { type: number, minimum: 0 }
+                dueAt: { type: string, format: date-time, nullable: true }
+                meta: { type: object, additionalProperties: true, nullable: true }
+      responses:
+        "201":
+          description: Invoice
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/admin/refunds:
+    post:
+      operationId: admin.refunds.issue
+      summary: Issue a refund to an account
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId, asset, amount, reason]
+              properties:
+                accountId: { type: string, format: uuid }
+                asset: { $ref: "#/components/schemas/Asset" }
+                amount: { type: number, minimum: 0 }
+                reason: { type: string }
+      responses:
+        "201":
+          description: Refund
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Refund" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/admin/withdrawals/{withdrawalId}/rbf:
+    post:
+      operationId: admin.withdrawals.rbf
+      summary: Retry a stuck withdrawal with a higher fee (Replace-by-Fee)
+      tags: [Admin]
+      parameters:
+        - name: withdrawalId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                newFee:
+                  type: number
+                  description: Optional new fee, if not provided, it will be auto-calculated.
+      responses:
+        "202": { description: RBF attempt accepted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/webhooks/deposits:
+    post:
+      operationId: webhooks.deposits
+      summary: Receive deposit tx from watcher
+      tags: [Webhooks]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DepositTx" }
+      responses:
+        "202": { description: Accepted }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/webhooks/withdrawals:
+    post:
+      operationId: webhooks.withdrawals
+      summary: Receive withdrawal tx status from broadcaster
+      tags: [Webhooks]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WithdrawalTx" }
+      responses:
+        "202": { description: Accepted }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not Found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unprocessable:
+      description: Unprocessable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InsufficientFunds:
+      description: Insufficient funds
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too Many Requests
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 0 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UpstreamUnavailable:
+      description: Upstream service unavailable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ServerError:
+      description: Server Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+    Asset:
+      type: string
+      enum: [STAR, FZ, PT, USDT]
+    Network:
+      type: string
+      enum: [EVM, TON]
+    Account:
+      type: object
+      required: [id, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid, nullable: true }
+        orgId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [Active, Suspended, Closed] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    AccountPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Account" }
+        nextCursor: { type: string, nullable: true }
+    Balance:
+      type: object
+      required: [id, accountId, asset, available, held]
+      properties:
+        id: { type: string, format: uuid }
+        accountId: { type: string, format: uuid }
+        asset: { $ref: "#/components/schemas/Asset" }
+        available: { type: number }
+        held: { type: number }
+        updatedAt: { type: string, format: date-time }
+    HoldPurpose:
+      type: string
+      enum: [Match, Escrow, Funding, Invoice, Other]
+    HoldStatus:
+      type: string
+      enum: [Active, Captured, Released, Expired, Voided]
+    Hold:
+      type: object
+      required: [id, accountId, asset, amount, status]
+      properties:
+        id: { type: string, format: uuid }
+        accountId: { type: string, format: uuid }
+        asset: { $ref: "#/components/schemas/Asset" }
+        amount: { type: number }
+        status: { $ref: "#/components/schemas/HoldStatus" }
+        purpose: { $ref: "#/components/schemas/HoldPurpose" }
+        purposeId: { type: string }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        idemKey: { type: string, description: "Unique idempotency key from the caller" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    HoldPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Hold" }
+        nextCursor: { type: string, nullable: true }
+    Settlement:
+      type: object
+      required: [id, purpose, purposeId, status]
+      properties:
+        id: { type: string, format: uuid }
+        purpose: { $ref: "#/components/schemas/HoldPurpose" }
+        purposeId: { type: string }
+        status: { type: string, enum: [Pending, Succeeded, Failed, Voided] }
+        breakdown: { type: object, additionalProperties: true }
+        receiptsHash: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    DepositIntent:
+      type: object
+      required: [id, accountId, asset, network, address, status]
+      properties:
+        id: { type: string, format: uuid }
+        accountId: { type: string, format: uuid }
+        asset: { $ref: "#/components/schemas/Asset" }
+        network: { $ref: "#/components/schemas/Network" }
+        address: { type: string }
+        memo: { type: string, nullable: true }
+        minConf: { type: integer }
+        status: { type: string, enum: [Pending, Monitoring, Credited, Expired, Canceled] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    DepositTx:
+      type: object
+      required: [intentId, txHash, amount, confirmations, status]
+      properties:
+        intentId: { type: string, format: uuid }
+        txHash: { type: string }
+        amount: { type: number }
+        confirmations: { type: integer }
+        status: { type: string, enum: [Pending, Confirmed, Reorged] }
+        detectedAt: { type: string, format: date-time }
+        creditedAt: { type: string, format: date-time, nullable: true }
+    WithdrawalRequest:
+      type: object
+      required: [id, accountId, asset, network, toAddress, amount, status]
+      properties:
+        id: { type: string, format: uuid }
+        accountId: { type: string, format: uuid }
+        asset: { $ref: "#/components/schemas/Asset" }
+        network: { $ref: "#/components/schemas/Network" }
+        toAddress: { type: string }
+        amount: { type: number }
+        fee: { type: number, nullable: true }
+        status: { type: string, enum: [Created, Queued, Broadcast, Confirmed, Failed, Canceled, Stuck] }
+        idemKey: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    WithdrawalTx:
+      type: object
+      required: [requestId, txHash, confirmations, status]
+      properties:
+        requestId: { type: string, format: uuid }
+        txHash: { type: string }
+        confirmations: { type: integer }
+        status: { type: string, enum: [Pending, Confirmed, Reorged, Failed] }
+        broadcastAt: { type: string, format: date-time }
+        confirmedAt: { type: string, format: date-time, nullable: true }
+    ConversionQuote:
+      type: object
+      required: [id, accountId, fromAsset, toAsset, amount, rate, feeBps, feeAmount, snapshotId, signature, expiresAt, status]
+      properties:
+        id: { type: string, format: uuid }
+        accountId: { type: string, format: uuid }
+        fromAsset: { $ref: "#/components/schemas/Asset" }
+        toAsset: { $ref: "#/components/schemas/Asset" }
+        amount: { type: number }
+        rate: { type: number }
+        feeBps: { type: number }
+        feeAmount: { type: number }
+        snapshotId: { type: string }
+        signature: { type: string }
+        expiresAt: { type: string, format: date-time }
+        status: { type: string, enum: [Active, Expired, Revoked] }
+        idemKey: { type: string }
+        createdAt: { type: string, format: date-time }
+    ConversionOrder:
+      type: object
+      required: [id, quoteId, status, fromAmount, toAmount, feeAmount, executedAt]
+      properties:
+        id: { type: string, format: uuid }
+        quoteId: { type: string, format: uuid }
+        status: { type: string, enum: [Succeeded, Failed] }
+        fromAmount: { type: number }
+        toAmount: { type: number }
+        feeAmount: { type: number }
+        journalTxId: { type: string, format: uuid }
+        executedAt: { type: string, format: date-time }
+    Invoice:
+      type: object
+      required: [id, payeeAccountId, asset, amount, status]
+      properties:
+        id: { type: string, format: uuid }
+        payeeAccountId: { type: string, format: uuid }
+        payerAccountId: { type: string, format: uuid, nullable: true }
+        asset: { $ref: "#/components/schemas/Asset" }
+        amount: { type: number }
+        status: { type: string, enum: [Draft, Open, Paid, Canceled, Expired] }
+        dueAt: { type: string, format: date-time, nullable: true }
+        meta: { type: object, additionalProperties: true, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+    Refund:
+      type: object
+      required: [id, accountId, asset, amount, status]
+      properties:
+        id: { type: string, format: uuid }
+        invoiceId: { type: string, format: uuid, nullable: true }
+        accountId: { type: string, format: uuid }
+        asset: { $ref: "#/components/schemas/Asset" }
+        amount: { type: number }
+        reason: { type: string }
+        status: { type: string, enum: [Issued, Failed] }
+        journalTxId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+    Receipt:
+      type: object
+      required: [id, kind, refId, total, currency, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [Hold, Settlement, Deposit, Withdrawal, Conversion, Invoice, Refund] }
+        refId: { type: string }
+        lines: { type: object, additionalProperties: true }
+        total: { type: number }
+        currency: { type: string }
+        createdAt: { type: string, format: date-time }
