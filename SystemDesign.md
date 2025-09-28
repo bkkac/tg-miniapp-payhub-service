@@ -1,10 +1,5 @@
 
 Repo: tg-miniapp-payhub-service
-File: SystemDesign.md
-SHA-256: 83108c1128950cb9d6df80478a7eb2d59f785d45e9476391fd939e6087700b59
-Bytes: 37449
-Generated: 2025-09-27 14:37 GMT+7
-Inputs: New UserStories.md (authoritative), API Spec Guide, Data Schema Guide
 
 ---
 
@@ -70,7 +65,7 @@ flowchart LR
 ## 2. Technology Stack
 
 - **Runtime**: Node.js 20, TypeScript, Fastify, OpenAPI 3.1 spec‑first
-- **DB**: PostgreSQL 15, partitioned tables for `ledger_entry`, `journal_tx`, `deposit_tx`, `withdrawal_tx`
+- **DB**: PostgreSQL 15 (PKs are UUID v7), partitioned tables for `ledger_entry`, `journal_tx`, `deposit_tx`, `withdrawal_tx`
 - **Ledger**: strict double‑entry, serializable journal posting inside DB txn
 - **Cache/Queue**: Redis 7, BullMQ for outbox relay, expirations, DLQs
 - **Crypto/Chain**: EVM and TON abstraction, confirmations policy with reorg handling
@@ -120,17 +115,17 @@ erDiagram
   OUTBOX_EVENT ||--o{ WEBHOOK_DELIVERY : "delivers"
 
   ACCOUNT {
-    uuid id PK
-    uuid userId FK
-    uuid orgId FK "nullable"
+    string id PK "uuidv7"
+    string userId FK "uuidv7"
+    string orgId FK "uuidv7"
     string status "enum: Active|Suspended|Closed"
     datetime createdAt
     datetime updatedAt
   }
 
   BALANCE {
-    uuid id PK
-    uuid accountId FK
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
     string asset "enum: STAR|FZ|PT|USDT"
     numeric available
     numeric held
@@ -139,30 +134,30 @@ erDiagram
   }
 
   JOURNAL_TX {
-    uuid id PK
+    string id PK "uuidv7"
     string type "enum: Deposit|Withdrawal|Hold|Capture|Release|Conversion|Invoice|Refund|Transfer|Adjustment"
     string status "enum: Posted|Reversed"
-    string correlationId
+    string correlationId "uuidv7"
     datetime postedAt
     bigint journalSeq "index"
   }
 
   LEDGER_ENTRY {
-    uuid id PK
-    uuid journalTxId FK
-    uuid accountId FK
+    string id PK "uuidv7"
+    string journalTxId FK "uuidv7"
+    string accountId FK "uuidv7"
     string asset
     numeric amount "positive for credit, negative for debit"
     string narrative
-    string eventId
+    string eventId "uuidv7"
     datetime postingTs
   }
 
   HOLD {
-    uuid id PK
-    uuid accountId FK
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
     string purpose "enum: Match|Escrow|Funding|Invoice|Other"
-    string purposeId
+    string purposeId "uuidv7"
     string asset
     numeric amount
     string status "enum: Active|Captured|Released|Expired|Voided"
@@ -173,9 +168,9 @@ erDiagram
   }
 
   SETTLEMENT {
-    uuid id PK
+    string id PK "uuidv7"
     string purpose "enum: Match|Escrow|Funding|Invoice|Other"
-    string purposeId
+    string purposeId "uuidv7"
     string status "enum: Pending|Succeeded|Failed|Voided"
     jsonb breakdown
     string receiptsHash
@@ -184,8 +179,8 @@ erDiagram
   }
 
   DEPOSIT_INTENT {
-    uuid id PK
-    uuid accountId FK
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
     string asset
     string network "enum: EVM|TON"
     string address
@@ -197,8 +192,8 @@ erDiagram
   }
 
   DEPOSIT_TX {
-    uuid id PK
-    uuid intentId FK
+    string id PK "uuidv7"
+    string intentId FK "uuidv7"
     string txHash "unique"
     numeric amount
     integer confirmations
@@ -208,8 +203,8 @@ erDiagram
   }
 
   WITHDRAWAL_REQUEST {
-    uuid id PK
-    uuid accountId FK
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
     string asset
     string network "enum: EVM|TON"
     string toAddress
@@ -222,8 +217,8 @@ erDiagram
   }
 
   WITHDRAWAL_TX {
-    uuid id PK
-    uuid requestId FK
+    string id PK "uuidv7"
+    string requestId FK "uuidv7"
     string txHash "unique"
     integer confirmations
     string status "enum: Pending|Confirmed|Reorged|Failed"
@@ -232,8 +227,8 @@ erDiagram
   }
 
   WITHDRAWAL_RBF_ATTEMPT {
-      uuid id PK
-      uuid requestId FK
+      string id PK "uuidv7"
+      string requestId FK "uuidv7"
       string originalTxHash
       string newTxHash "unique"
       numeric newFee
@@ -242,15 +237,15 @@ erDiagram
   }
 
   CONVERSION_QUOTE {
-    uuid id PK
-    uuid accountId FK
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
     string fromAsset
     string toAsset
     numeric amount
     numeric rate
     numeric feeBps
     numeric feeAmount
-    string snapshotId
+    string snapshotId "uuidv7"
     string signature
     datetime expiresAt
     string status "enum: Active|Expired|Revoked"
@@ -259,20 +254,20 @@ erDiagram
   }
 
   CONVERSION_ORDER {
-    uuid id PK
-    uuid quoteId FK
+    string id PK "uuidv7"
+    string quoteId FK "uuidv7"
     string status "enum: Succeeded|Failed"
     numeric fromAmount
     numeric toAmount
     numeric feeAmount
-    uuid journalTxId FK
+    string journalTxId FK "uuidv7"
     datetime executedAt
   }
 
   INVOICE {
-    uuid id PK
-    uuid payeeAccountId FK
-    uuid payerAccountId FK "nullable"
+    string id PK "uuidv7"
+    string payeeAccountId FK "uuidv7"
+    string payerAccountId FK "uuidv7"
     string asset
     numeric amount
     string status "enum: Draft|Open|Paid|Canceled|Expired"
@@ -283,20 +278,20 @@ erDiagram
   }
 
   REFUND {
-    uuid id PK
-    uuid invoiceId FK "nullable"
-    uuid accountId FK
+    string id PK "uuidv7"
+    string invoiceId FK "uuidv7"
+    string accountId FK "uuidv7"
     string asset
     numeric amount
     string reason
     string status "enum: Issued|Failed"
-    uuid journalTxId FK
+    string journalTxId FK "uuidv7"
     datetime createdAt
   }
 
   LIMIT_PROFILE {
-    uuid id PK
-    uuid accountId FK
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
     string tier "enum: Tier0|Tier1|Tier2|Tier3"
     numeric dailyWithdrawLimit
     numeric monthlyWithdrawLimit
@@ -306,8 +301,8 @@ erDiagram
   }
 
   USAGE_COUNTER {
-    uuid id PK
-    uuid accountId FK
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
     string metric "enum: WithdrawDaily|WithdrawMonthly|ConversionExposure"
     datetime windowStart
     datetime windowEnd
@@ -316,14 +311,14 @@ erDiagram
   }
 
   FEE_SCHEDULE {
-    uuid id PK
+    string id PK "uuidv7"
     string version
     jsonb rules
     datetime publishedAt
   }
 
   OUTBOX_EVENT {
-    uuid id PK
+    string id PK "uuidv7"
     string eventName
     jsonb payload
     string status "enum: Pending|Committed|Failed"
@@ -333,8 +328,8 @@ erDiagram
   }
 
   WEBHOOK_DELIVERY {
-    uuid id PK
-    uuid outboxId FK
+    string id PK "uuidv7"
+    string outboxId FK "uuidv7"
     string destination
     string status "enum: Pending|Succeeded|Failed"
     integer attempts
@@ -342,18 +337,18 @@ erDiagram
   }
 
   IDEMPOTENCY_KEY {
-    uuid id PK
+    string id PK "uuidv7"
     string scope
     string key "unique"
-    uuid targetId FK "nullable"
+    string targetId FK "uuidv7"
     datetime storedAt
     datetime expiresAt
   }
 
   RECEIPT {
-    uuid id PK
+    string id PK "uuidv7"
     string kind "enum: Hold|Settlement|Deposit|Withdrawal|Conversion|Invoice|Refund"
-    string refId
+    string refId "uuidv7"
     jsonb lines
     numeric total
     string currency
@@ -406,8 +401,8 @@ paths:
                 - required: [userId]
                 - required: [orgId]
               properties:
-                userId: { type: string, format: uuid, nullable: true }
-                orgId: { type: string, format: uuid, nullable: true }
+                userId: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a", nullable: true }
+                orgId: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a", nullable: true }
       responses:
         "201": { description: Account, content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -439,7 +434,7 @@ paths:
         - in: path
           name: accountId
           required: true
-          schema: { type: string }
+          schema: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
       responses:
         "200": { description: Balances, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Balance" } } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -464,11 +459,11 @@ paths:
               type: object
               required: [accountId, asset, amount, purpose, purposeId]
               properties:
-                accountId: { type: string, format: uuid }
+                accountId: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
                 asset: { $ref: "#/components/schemas/Asset" }
                 amount: { type: number, minimum: 0 }
                 purpose: { $ref: "#/components/schemas/HoldPurpose" }
-                purposeId: { type: string }
+                purposeId: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
                 expiresAt: { type: string, format: date-time, nullable: true }
       responses:
         "201": { description: Hold, content: { application/json: { schema: { $ref: "#/components/schemas/Hold" } } } }
@@ -485,7 +480,7 @@ paths:
       parameters:
         - in: query
           name: accountId
-          schema: { type: string }
+          schema: { type: string, format: uuid }
         - in: query
           name: status
           schema: { $ref: "#/components/schemas/HoldStatus" }
@@ -509,7 +504,7 @@ paths:
         - in: path
           name: holdId
           required: true
-          schema: { type: string }
+          schema: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
       responses:
         "202": { description: Release queued }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -530,15 +525,15 @@ paths:
               required: [purpose, purposeId, items]
               properties:
                 purpose: { $ref: "#/components/schemas/HoldPurpose" }
-                purposeId: { type: string }
+                purposeId: { type: string, format: uuid }
                 items:
                   type: array
                   items:
                     type: object
                     required: [holdId, toAccountId, amount]
                     properties:
-                      holdId: { type: string }
-                      toAccountId: { type: string }
+                      holdId: { type: string, format: uuid }
+                      toAccountId: { type: string, format: uuid }
                       amount: { type: number }
                 rakeBps: { type: number, minimum: 0, maximum: 10000, default: 0 }
       responses:
@@ -610,7 +605,7 @@ paths:
         - in: path
           name: withdrawalId
           required: true
-          schema: { type: string }
+          schema: { type: string, format: uuid }
       responses:
         "204": { description: Canceled }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -839,9 +834,9 @@ components:
       type: object
       required: [id, status]
       properties:
-        id: { type: string, format: uuid }
-        userId: { type: string, nullable: true }
-        orgId: { type: string, nullable: true }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
+        userId: { type: string, format: uuid, nullable: true }
+        orgId: { type: string, format: uuid, nullable: true }
         status: { type: string, enum: [Active, Suspended, Closed] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -857,8 +852,8 @@ components:
       type: object
       required: [id, accountId, asset, available, held]
       properties:
-        id: { type: string, format: uuid }
-        accountId: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
+        accountId: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         asset: { $ref: "#/components/schemas/Asset" }
         available: { type: number }
         held: { type: number }
@@ -876,13 +871,13 @@ components:
       type: object
       required: [id, accountId, asset, amount, status]
       properties:
-        id: { type: string, format: uuid }
-        accountId: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
+        accountId: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         asset: { $ref: "#/components/schemas/Asset" }
         amount: { type: number }
         status: { $ref: "#/components/schemas/HoldStatus" }
         purpose: { $ref: "#/components/schemas/HoldPurpose" }
-        purposeId: { type: string }
+        purposeId: { type: string, format: uuid }
         expiresAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
 
@@ -897,9 +892,9 @@ components:
       type: object
       required: [id, purpose, purposeId, status]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         purpose: { $ref: "#/components/schemas/HoldPurpose" }
-        purposeId: { type: string }
+        purposeId: { type: string, format: uuid }
         status: { type: string, enum: [Pending, Succeeded, Failed, Voided] }
         breakdown: { type: object, additionalProperties: true }
         receiptsHash: { type: string }
@@ -909,7 +904,7 @@ components:
       type: object
       required: [id, accountId, asset, network, address, status]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         accountId: { type: string, format: uuid }
         asset: { $ref: "#/components/schemas/Asset" }
         network: { $ref: "#/components/schemas/Network" }
@@ -935,7 +930,7 @@ components:
       type: object
       required: [id, accountId, asset, network, toAddress, amount, status]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         accountId: { type: string, format: uuid }
         asset: { $ref: "#/components/schemas/Asset" }
         network: { $ref: "#/components/schemas/Network" }
@@ -960,7 +955,7 @@ components:
       type: object
       required: [id, accountId, from, to, amount, rate, feeBps, feeAmount, snapshotId, signature, expiresAt, status]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         accountId: { type: string, format: uuid }
         from: { $ref: "#/components/schemas/Asset" }
         to: { $ref: "#/components/schemas/Asset" }
@@ -968,7 +963,7 @@ components:
         rate: { type: number }
         feeBps: { type: number }
         feeAmount: { type: number }
-        snapshotId: { type: string }
+        snapshotId: { type: string, format: uuid }
         signature: { type: string }
         expiresAt: { type: string, format: date-time }
         status: { type: string, enum: [Active, Expired, Revoked] }
@@ -977,7 +972,7 @@ components:
       type: object
       required: [id, quoteId, status, fromAmount, toAmount, feeAmount, executedAt]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         quoteId: { type: string, format: uuid }
         status: { type: string, enum: [Succeeded, Failed] }
         fromAmount: { type: number }
@@ -989,7 +984,7 @@ components:
       type: object
       required: [id, payeeAccountId, asset, amount, status]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         payeeAccountId: { type: string, format: uuid }
         payerAccountId: { type: string, format: uuid, nullable: true }
         asset: { $ref: "#/components/schemas/Asset" }
@@ -1004,7 +999,7 @@ components:
       type: object
       required: [id, asset, amount, status]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, example: "018f2a2e-9b1c-7b1f-bc1d-7f3b3f7c5e6a" }
         invoiceId: { type: string, format: uuid, nullable: true }
         accountId: { type: string, format: uuid }
         asset: { $ref: "#/components/schemas/Asset" }
