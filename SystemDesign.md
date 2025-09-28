@@ -38,14 +38,13 @@ flowchart LR
     IDN["Identity API"]
     PRC["Price API"]
     CFG["Config API"]
-    EVT["Events API"]
+    EVT["Events Bus"]
     WRK["Workers"]
   end
 
   subgraph "External"
     CHAIN["Blockchain RPC"]
     CUST["Custodian/Wallet Node"]
-    KYC["KYC via Identity"]
   end
 
   TG -->|"wallet ops, deposits, withdraws"| W3
@@ -99,7 +98,7 @@ flowchart LR
 - On‑chain custody — interacts with custodian or wallet node
 
 **Boundaries**
-- Consumes Identity for authZ/badge/limits, Price for quotes, Config for signed fees/limits, emits events to Events service
+- Consumes `Identity` for authZ/badge/limits, `Price` for quotes, Config for signed fees/limits, `emits` events to Events service
 
 ---
 
@@ -116,6 +115,7 @@ erDiagram
   JOURNAL_TX ||--o{ LEDGER_ENTRY : "posts"
   DEPOSIT_INTENT ||--o{ DEPOSIT_TX : "observes"
   WITHDRAWAL_REQUEST ||--o{ WITHDRAWAL_TX : "broadcasts"
+  WITHDRAWAL_REQUEST ||--o{ WITHDRAWAL_RBF_ATTEMPT : "retries"
   CONVERSION_QUOTE ||--|| CONVERSION_ORDER : "consumes"
   OUTBOX_EVENT ||--o{ WEBHOOK_DELIVERY : "delivers"
 
@@ -135,7 +135,7 @@ erDiagram
     numeric available
     numeric held
     datetime updatedAt
-    string accountId "unique"
+    string "unique(accountId, asset)" "unique"
   }
 
   JOURNAL_TX {
@@ -215,7 +215,7 @@ erDiagram
     string toAddress
     numeric amount
     numeric fee "nullable"
-    string status "enum: Created|Queued|Broadcast|Confirmed|Failed|Canceled"
+    string status "enum: Created|Queued|Broadcast|Confirmed|Failed|Canceled|Stuck"
     string idemKey "unique"
     datetime createdAt
     datetime updatedAt
@@ -229,6 +229,16 @@ erDiagram
     string status "enum: Pending|Confirmed|Reorged|Failed"
     datetime broadcastAt
     datetime confirmedAt "nullable"
+  }
+
+  WITHDRAWAL_RBF_ATTEMPT {
+      uuid id PK
+      uuid requestId FK
+      string originalTxHash
+      string newTxHash "unique"
+      numeric newFee
+      string status "enum: Pending|Broadcast|Confirmed|Failed"
+      datetime attemptedAt
   }
 
   CONVERSION_QUOTE {
@@ -302,7 +312,7 @@ erDiagram
     datetime windowStart
     datetime windowEnd
     numeric amountUsed
-    string accountId "unique"
+    string "unique(accountId, metric, windowStart)" "unique"
   }
 
   FEE_SCHEDULE {
@@ -360,7 +370,7 @@ info:
   title: tg-miniapp-payhub-service API
   version: 1.0.0
 servers:
-  - url: https://payhub.api.fuze.local
+  - url: [https://payhub.api.fuze.local](https://payhub.api.fuze.local)
 security:
   - BearerAuth: []
 tags:
@@ -420,7 +430,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/ServerError" }
 
-  /v1/accounts/{{accountId}}/balances:
+  /v1/accounts/{accountId}/balances:
     get:
       operationId: accounts.balances
       summary: Get balances for an account
@@ -490,7 +500,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/ServerError" }
 
-  /v1/holds/{{holdId}}/release:
+  /v1/holds/{holdId}/release:
     post:
       operationId: holds.release
       summary: Release a hold back to available
@@ -591,7 +601,7 @@ paths:
         "422": { $ref: "#/components/responses/Unprocessable" }
         "500": { $ref: "#/components/responses/ServerError" }
 
-  /v1/withdrawals/{{withdrawalId}}:
+  /v1/withdrawals/{withdrawalId}:
     delete:
       operationId: withdrawals.cancel
       summary: Cancel a withdrawal if not yet broadcast
@@ -706,6 +716,31 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "500": { $ref: "#/components/responses/ServerError" }
+
+  /v1/admin/withdrawals/{withdrawalId}/rbf:
+    post:
+      operationId: admin.withdrawals.rbf
+      summary: Retry a stuck withdrawal with a higher fee (Replace-by-Fee)
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: withdrawalId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                newFee: { type: number, description: "Optional new fee, if not provided, it will be auto-calculated." }
+      responses:
+        "202": { description: RBF attempt accepted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /v1/webhooks/deposits:
     post:
@@ -907,7 +942,7 @@ components:
         toAddress: { type: string }
         amount: { type: number }
         fee: { type: number, nullable: true }
-        status: { type: string, enum: [Created, Queued, Broadcast, Confirmed, Failed, Canceled] }
+        status: { type: string, enum: [Created, Queued, Broadcast, Confirmed, Failed, Canceled, Stuck] }
         createdAt: { type: string, format: date-time }
 
     WithdrawalTx:
@@ -985,11 +1020,11 @@ components:
 ### 6.1 Create hold → capture via settlement
 ```mermaid
 sequenceDiagram
-  participant SVC as Playhub or Escrow
+  participant SVC as Calling Service (e.g., Playhub)
   participant PH as Payhub API
   participant DB as Ledger
-  SVC->>PH: POST /v1/holds
-  PH->>DB: lock available, create HOLD, post DR/CR
+  SVC->>PH: POST /v1/holds (with accountId)
+  PH->>DB: lock available, create HOLD, post DR/CR journal
   DB-->>PH: ok
   SVC->>PH: POST /v1/settlements
   PH->>DB: capture HOLD, transfer to payee, post journal
@@ -1002,9 +1037,24 @@ sequenceDiagram
   participant W as Watcher
   participant PH as Payhub API
   participant DB as Ledger
-  W->>PH: POST /v1/webhooks/deposits
-  PH->>DB: upsert DEPOSIT_TX, post credit, close intent
-  DB-->>PH: ok
+  participant EVT as Events Bus
+
+  W->>PH: POST /v1/webhooks/deposits (new tx detected)
+  PH->>DB: upsert DEPOSIT_TX (status=Pending, confirmations=0)
+  
+  loop Confirmations
+    W->>PH: POST /v1/webhooks/deposits (confirmations updated)
+    PH->>DB: update DEPOSIT_TX.confirmations
+  end
+
+  PH->>DB: IF confirmations >= minConf THEN update DEPOSIT_TX (status=Confirmed), post credit journal
+  PH->>EVT: publish("payhub.deposit.updated@v1", status=Confirmed)
+  
+  alt Reorg Detected
+    W->>PH: POST /v1/webhooks/deposits (confirmations drop or tx disappears)
+    PH->>DB: update DEPOSIT_TX (status=Reorged), post reversing journal
+    PH->>EVT: publish("payhub.deposit.updated@v1", status=Reorged)
+  end
 ```
 
 ### 6.3 Withdrawal broadcast → confirm → reorg handling
@@ -1014,14 +1064,23 @@ sequenceDiagram
   participant PH as Payhub API
   participant B as Broadcaster
   participant DB as Ledger
+  participant ADM as Admin
   U->>PH: POST /v1/withdrawals
   PH->>DB: velocity check, lock available, queue broadcast
   B-->>PH: POST /v1/webhooks/withdrawals, txHash
   PH->>DB: update status Broadcast
+  
+  alt Stuck Transaction
+    PH->>PH: Monitor detects no confirmation after T minutes
+    PH->>DB: update WITHDRAWAL_REQUEST (status=Stuck)
+    ADM->>PH: POST /v1/admin/withdrawals/{id}/rbf (with new fee)
+    PH->>DB: Create WITHDRAWAL_RBF_ATTEMPT, queue new broadcast
+    B-->>PH: POST /v1/webhooks/withdrawals, newTxHash
+    PH->>DB: update RBF_ATTEMPT and REQUEST (status=Broadcast)
+  end
+
   B-->>PH: POST /v1/webhooks/withdrawals, confirmations=n
   PH->>DB: confirm and post journal
-  B-->>PH: POST /v1/webhooks/withdrawals, status=Reorged
-  PH->>DB: revert to Pending, await re-confirm
 ```
 
 ### 6.4 Conversion quote → execute
@@ -1029,12 +1088,12 @@ sequenceDiagram
 sequenceDiagram
   participant U as User
   participant PH as Payhub API
-  participant PR as Price API
+  participant PRC as Price API
   participant DB as Ledger
   U->>PH: POST /v1/conversions/quote
-  PH->>PR: get signed oracle snapshot
-  PR-->>PH: snapshot id, price
-  PH-->>U: 201 Quote
+  PH->>PRC: POST /internal/v1/quotes
+  PRC-->>PH: 201 Signed Quote
+  PH-->>U: 201 ConversionQuote
   U->>PH: POST /v1/conversions/execute
   PH->>DB: atomic DR from, CR to, post fee
   DB-->>PH: ok
