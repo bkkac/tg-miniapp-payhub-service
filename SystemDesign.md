@@ -6,59 +6,260 @@ Repo: tg-miniapp-payhub-service
 ## 1. Architecture Diagram — Mermaid flowchart
 
 ```mermaid
-flowchart LR
-  subgraph "Clients"
-    TG["Telegram WebApp"]
-    W3["Web3 Portal"]
-    ADM["Admin Console"]
-  end
+erDiagram
+  ACCOUNT ||--o{ BALANCE : "has"
+  ACCOUNT ||--o{ RECEIPT : "produces"
+  ACCOUNT ||--o{ HOLD : "locks"
+  ACCOUNT ||--o{ WITHDRAWAL_REQUEST : "requests"
+  ACCOUNT ||--o{ DEPOSIT_INTENT : "initiates"
+  ACCOUNT ||--o{ CONVERSION_ORDER : "converts"
+  JOURNAL_TX ||--o{ LEDGER_ENTRY : "posts"
+  DEPOSIT_INTENT ||--o{ DEPOSIT_TX : "observes"
+  WITHDRAWAL_REQUEST ||--o{ WITHDRAWAL_TX : "broadcasts"
+  WITHDRAWAL_REQUEST ||--o{ WITHDRAWAL_RBF_ATTEMPT : "retries"
+  CONVERSION_QUOTE ||--|| CONVERSION_ORDER : "consumes"
+  OUTBOX_EVENT ||--o{ WEBHOOK_DELIVERY : "delivers"
 
-  subgraph "Payhub Service (this repo)"
-    API["REST API"]
-    LED["Ledger"]
-    HLD["Holds"]
-    STLM["Settlements"]
-    DPT["Deposits"]
-    WDR["Withdrawals"]
-    CNV["Conversions"]
-    INV["Invoices"]
-    RSK["Risk & Limits"]
-    OUT["Outbox"]
-    Q["Jobs Queue"]
-    CACH["Redis Cache"]
-    DB["Postgres"]
-  end
+  ACCOUNT {
+    string id PK "uuidv7"
+    string userId FK "uuidv7"
+    string orgId FK "uuidv7"
+    string status "enum: Active|Suspended|Closed"
+    datetime createdAt
+    datetime updatedAt
+  }
 
-  subgraph "Platform Services"
-    IDN["Identity API"]
-    PRC["Price API"]
-    CFG["Config API"]
-    EVT["Events Bus"]
-    WRK["Workers"]
-  end
+  BALANCE {
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
+    string asset "enum: STAR|FZ|PT|USDT"
+    numeric available
+    numeric held
+    datetime updatedAt
+    string uniqueConstraint "unique(accountId, asset)"
+  }
 
-  subgraph "External"
-    CHAIN["Blockchain RPC"]
-    CUST["Custodian/Wallet Node"]
-  end
+  JOURNAL_TX {
+    string id PK "uuidv7"
+    string type "enum: Deposit|Withdrawal|Hold|Capture|Release|Conversion|Invoice|Refund|Transfer|Adjustment"
+    string status "enum: Posted|Reversed"
+    string correlationId "uuidv7"
+    datetime postedAt
+    bigint journalSeq "index"
+  }
 
-  TG -->|"wallet ops, deposits, withdraws"| W3
-  W3 -->|"HTTP"| API
-  ADM -->|"recon, refunds, limits"| API
+  LEDGER_ENTRY {
+    string id PK "uuidv7"
+    string journalTxId FK "uuidv7"
+    string accountId FK "uuidv7"
+    string asset
+    numeric amount "positive for credit, negative for debit"
+    string narrative
+    string eventId "uuidv7"
+    datetime postingTs
+  }
 
-  API -->|"authZ, badge gates"| IDN
-  API -->|"price for quotes"| PRC
-  API -->|"signed limits, fees"| CFG
-  API -->|"emit domain events"| EVT
+  HOLD {
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
+    string purpose "enum: Match|Escrow|Funding|Invoice|Other"
+    string purposeId "uuidv7"
+    string asset
+    numeric amount
+    string status "enum: Active|Captured|Released|Expired|Voided"
+    datetime expiresAt "nullable"
+    string idemKey "unique"
+    datetime createdAt
+    datetime updatedAt
+  }
 
-  API -->|"persist"| DB
-  API -->|"cache, rate, idem"| CACH
-  API -->|"enqueue, retries"| Q
-  API --> OUT
+  SETTLEMENT {
+    string id PK "uuidv7"
+    string purpose "enum: Match|Escrow|Funding|Invoice|Other"
+    string purposeId "uuidv7"
+    string status "enum: Pending|Succeeded|Failed|Voided"
+    jsonb breakdown
+    string receiptsHash
+    datetime createdAt
+    datetime updatedAt
+  }
 
-  DPT -->|"watch chain, credit"| CHAIN
-  WDR -->|"broadcast tx"| CUST
-  WRK -->|"sweep, expirations"| API
+  DEPOSIT_INTENT {
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
+    string asset
+    string network "enum: EVM|TON"
+    string address
+    string memo "nullable"
+    integer minConf
+    string status "enum: Pending|Monitoring|Credited|Expired|Canceled"
+    datetime createdAt
+    datetime updatedAt
+  }
+
+  DEPOSIT_TX {
+    string id PK "uuidv7"
+    string intentId FK "uuidv7"
+    string txHash "unique"
+    numeric amount
+    integer confirmations
+    string status "enum: Pending|Confirmed|Reorged"
+    datetime detectedAt
+    datetime creditedAt "nullable"
+  }
+
+  WITHDRAWAL_REQUEST {
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
+    string asset
+    string network "enum: EVM|TON"
+    string toAddress
+    numeric amount
+    numeric fee "nullable"
+    string status "enum: Created|Queued|Broadcast|Confirmed|Failed|Canceled|Stuck"
+    string idemKey "unique"
+    datetime createdAt
+    datetime updatedAt
+  }
+
+  WITHDRAWAL_TX {
+    string id PK "uuidv7"
+    string requestId FK "uuidv7"
+    string txHash "unique"
+    integer confirmations
+    string status "enum: Pending|Confirmed|Reorged|Failed"
+    datetime broadcastAt
+    datetime confirmedAt "nullable"
+  }
+
+  WITHDRAWAL_RBF_ATTEMPT {
+      string id PK "uuidv7"
+      string requestId FK "uuidv7"
+      string originalTxHash
+      string newTxHash "unique"
+      numeric newFee
+      string status "enum: Pending|Broadcast|Confirmed|Failed"
+      datetime attemptedAt
+  }
+
+  CONVERSION_QUOTE {
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
+    string fromAsset
+    string toAsset
+    numeric amount
+    numeric rate
+    numeric feeBps
+    numeric feeAmount
+    string snapshotId "uuidv7"
+    string signature
+    datetime expiresAt
+    string status "enum: Active|Expired|Revoked"
+    string idemKey "unique"
+    datetime createdAt
+  }
+
+  CONVERSION_ORDER {
+    string id PK "uuidv7"
+    string quoteId FK "uuidv7"
+    string status "enum: Succeeded|Failed"
+    numeric fromAmount
+    numeric toAmount
+    numeric feeAmount
+    string journalTxId FK "uuidv7"
+    datetime executedAt
+  }
+
+  INVOICE {
+    string id PK "uuidv7"
+    string payeeAccountId FK "uuidv7"
+    string payerAccountId FK "uuidv7"
+    string asset
+    numeric amount
+    string status "enum: Draft|Open|Paid|Canceled|Expired"
+    datetime dueAt "nullable"
+    jsonb meta
+    datetime createdAt
+    datetime updatedAt
+  }
+
+  REFUND {
+    string id PK "uuidv7"
+    string invoiceId FK "uuidv7"
+    string accountId FK "uuidv7"
+    string asset
+    numeric amount
+    string reason
+    string status "enum: Issued|Failed"
+    string journalTxId FK "uuidv7"
+    datetime createdAt
+  }
+
+  LIMIT_PROFILE {
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
+    string tier "enum: Tier0|Tier1|Tier2|Tier3"
+    numeric dailyWithdrawLimit
+    numeric monthlyWithdrawLimit
+    numeric conversionExposureLimit
+    datetime lastResetAt
+    datetime updatedAt
+  }
+
+  USAGE_COUNTER {
+    string id PK "uuidv7"
+    string accountId FK "uuidv7"
+    string metric "enum: WithdrawDaily|WithdrawMonthly|ConversionExposure"
+    datetime windowStart
+    datetime windowEnd
+    numeric amountUsed
+    string uniqueConstraint "unique(accountId, metric, windowStart)"
+  }
+
+  FEE_SCHEDULE {
+    string id PK "uuidv7"
+    string version
+    jsonb rules
+    datetime publishedAt
+  }
+
+  OUTBOX_EVENT {
+    string id PK "uuidv7"
+    string eventName
+    jsonb payload
+    string status "enum: Pending|Committed|Failed"
+    integer attempts
+    datetime createdAt
+    datetime updatedAt
+  }
+
+  WEBHOOK_DELIVERY {
+    string id PK "uuidv7"
+    string outboxId FK "uuidv7"
+    string destination
+    string status "enum: Pending|Succeeded|Failed"
+    integer attempts
+    datetime nextAttemptAt
+  }
+
+  IDEMPOTENCY_KEY {
+    string id PK "uuidv7"
+    string scope
+    string key "unique"
+    string targetId FK "uuidv7"
+    datetime storedAt
+    datetime expiresAt
+  }
+
+  RECEIPT {
+    string id PK "uuidv7"
+    string kind "enum: Hold|Settlement|Deposit|Withdrawal|Conversion|Invoice|Refund"
+    string refId "uuidv7"
+    jsonb lines
+    numeric total
+    string currency
+    datetime createdAt
+  }
 ```
 ---
 
