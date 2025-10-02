@@ -1,9 +1,4 @@
 Repo: tg-miniapp-payhub-service
-File: SystemDesign.md
-SHA-256: 7d6c544bd0a793a521481b4737d6e5d590e0c905de70e7e174246067b45f4705
-Bytes: 31735
-Generated: 2025-09-30 00:13 GMT+7
-Sources: UserStories.md (authoritative), prior SystemDesign.md (baseline)
 
 -----
 
