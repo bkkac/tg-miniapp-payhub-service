@@ -1,233 +1,378 @@
 Repo: tg-miniapp-payhub-service
+File: UserStories.md
+SHA-256: 1ab336afd57038e1f1546428c1f49968a069d11acd8963cc3dda90181f5dbe22
+Bytes: 22350
+Generated: 2025-10-03 14:39 GMT+7
+Sources: old UserStories.md (baseline), Guide
 
 ---
 
 # Section A — Personas & Stakeholders
 
-> Summaries derived from the Stakeholder Catalog (Appendix A1).
+> **PayHub** is FUZE.ac’s money & value rail: double-entry ledger, balances, **invoices/holds/refunds**, **deposits/withdrawals**, **conversions/quotes**, merchant **settlements**, and programmable **escrow** (for Star Exchange, Funding, PlayHub, Events). It enforces **Identity** decisions (badges/KYC/jurisdictions), uses **Price** for FX, emits canonical **finance events**, and exposes **webhooks** for merchants/partners. User-facing pages (WebApp/Admin) must follow the **Global List Pattern** and show **EXP** hooks for spend/earn actions.
 
-* **End User** — A customer of the Telegram Mini App or Web3 Portal whose funds (STAR, FZ, PT, USDT) are managed by Payhub. They initiate deposits, withdrawals, and conversions.
-* **Partner Service** — Any internal service (e.g., `Playhub`, `Funding`, `Campaigns`) that relies on Payhub's custody and settlement capabilities. They create holds on user funds and later capture or release them to complete a business workflow.
-* **Admin/Finance Ops** — A staff member with privileged access who is responsible for financial oversight. They perform reconciliations, issue refunds, manage fee configurations, and can manually intervene in transaction lifecycles.
-* **Compliance/AML Officer** — A staff member who monitors for regulatory compliance. They review large or suspicious transactions, manage address risk screenings, and handle KYC-related transaction gating.
-* **SRE/Ops** — The technical team responsible for the high availability and integrity of the Payhub service. They monitor the ledger, manage queues, and respond to incidents.
-* **Workers/Schedulers** — The automated background system that performs critical asynchronous tasks like watching for on-chain deposits, broadcasting withdrawals, and handling transaction retries.
+**Stakeholders**
+- **End User** — pays invoices, deposits/withdraws, converts, views history/receipts.
+- **Investor User** — higher limits; can withdraw larger amounts after KYC checks.
+- **Merchant / Project Owner** — issues invoices, manages refunds, sets webhook endpoints, views settlements.
+- **Events/PlayHub/Star Exchange/Funding Services** — create invoices/holds, read status, and receive payouts/refunds.
+- **Admin (Finance Ops)** — investigates issues, creates manual adjustments, manages fee schedules, runs settlements.
+- **Compliance Officer** — handles KYC/sanctions hits, reviews large transfers, approves overrides.
+- **Risk Analyst** — velocity controls, suspicious patterns, blocks/holds.
+- **Support Agent** — reads receipts and status to assist users.
+- **Price Service** — provides quotes; marks staleness.
+- **Identity Service** — gates actions by badge/KYC/region; step-up prompts.
+- **Workers/Schedulers** — settlement batches, expired holds, dunning/retries.
+- **Notifications** — sends receipts, reminders, dunning, settlement reports.
+- **Auditor** — exports immutable logs, reconciliation, evidence.
+- **Developer (Merchant)** — integrates via webhooks/API keys; tests in sandbox.
 
 ---
 
 # Section B — Epics → Features → User Stories (exhaustive)
 
-## Epic B1 — Core Ledger and Accounts
+## Epic B1 — Accounts, Ledger & Balances
 
-### Feature B1.1 — Account Provisioning
-**Story B1.1.1** — *As a Partner Service, I want an account to be provisioned for a new user automatically,* so that *I can immediately place holds or issue credits without a separate setup step.*
-**Acceptance Criteria (GWT)**
-1.  **Given** a `userId` for a user who does not yet have a Payhub account, **when** a Partner Service makes its first call that requires an account (e.g., `POST /v1/holds`), **then** Payhub transparently creates an `ACCOUNT` and all associated `BALANCE` rows (for STAR, FZ, PT, USDT) initialized to zero.
-2.  **Given** an `ACCOUNT` is created, **when** the operation completes, **then** a `payhub.account.created@v1` event is emitted.
-3.  **Given** a Partner Service explicitly calls `POST /v1/accounts` (`accounts.create`) with an `Idempotency-Key`, **when** the account already exists, **then** the API returns the existing `accountId` without creating duplicate records.
+### Feature B1.1 — Account creation (double-entry ledger)
+**Story B1.1.1** — *As a Service, I create accounts so that funds movements remain balanced and auditable.*
 
-**Data Touchpoints**: `ACCOUNT`, `BALANCE`.  
-**Cross‑Service Interactions**: Implicitly relies on `Identity` to resolve the `userId`.  
-**State & Lifecycle**: `ACCOUNT` status: `Active` → `Suspended`.  
-**Observability**: Metric for `accounts.created.implicitly` vs. `accounts.created.explicitly`.
+**Acceptance (GWT)**
+1. **Given** a new user/merchant, **when** Identity emits `identity.session.created@v1` or Admin provisions a merchant, **then** PayHub creates accounts: `USER:{id}` and `USER:FEES`, `MERCHANT:{id}`, `ESCROW:{context}`, and corresponding **contra** accounts.
+2. Each movement posts **two equal & opposite** entries; sum per currency ≡ 0.
+3. Immutable journal with sequential IDs; **no in-place edits**, only **reversals**.
 
-### Feature B1.2 — Immutable Double-Entry Ledger
-**Story B1.2.1** — *As a Finance Ops admin, I require that every movement of funds is recorded as a balanced, double-entry transaction,* so that *the system is fully auditable and reconcilable at all times.*
-**Acceptance Criteria (GWT)**
-1.  **Given** any financial operation occurs (e.g., a deposit, withdrawal, or settlement), **when** the system processes it, **then** it must create a single, balanced `JOURNAL_TX`.
-2.  **Given** a `JOURNAL_TX` is created, **when** I inspect it, **then** it must contain at least two `LEDGER_ENTRY` records where the sum of all debits (`amount < 0`) equals the sum of all credits (`amount > 0`).
-3.  **Given** an operation fails mid-process, **when** the database transaction is rolled back, **then** no partial `LEDGER_ENTRY` records are ever persisted, ensuring atomicity.
+**Non-Happy**: duplicate account → idempotent; storage failure → retry with outbox; currency not supported → 422.
 
-**Data Touchpoints**: `JOURNAL_TX`, `LEDGER_ENTRY`.  
-**Security & Compliance**: The immutability and balanced nature of the ledger are the core financial controls of the platform. This is enforced at the database level with constraints.
+### Feature B1.2 — Balances & statements
+**Story B1.2.1** — *As a User/Merchant, I view balances and statements so that I know my funds state.*
 
-## Epic B2 — Holds and Settlements
+**Acceptance**
+1. `GET /payhub/v1/balances` returns available, pending, escrow per currency; strong read with snapshot version.
+2. `GET /payhub/v1/statements?cursor=…` returns paged journal lines; **infinite scroll**; **pull-to-refresh** restarts at page 1.
+3. CSV/PDF statement export via async job; link expires in 7 days.
 
-### Feature B2.1 — Fund Reservation via Holds
-**Story B2.1.1** — *As a Partner Service (e.g., Playhub), I want to place a temporary hold on a user's funds,* so that *I can guarantee their availability for a subsequent action, like joining a staked game.*
-**Acceptance Criteria (GWT)**
-1.  **Given** a user has a sufficient `available` balance, **when** I call `POST /v1/holds` (`holds.create`) with an `amount`, `asset`, and a unique `purposeId`, **then** a `HOLD` record is created with `status: Active`.
-2.  **Given** the hold is created successfully, **when** the user's `BALANCE` is updated, **then** their `available` balance is decreased by the amount, and their `held` balance is increased by the same amount, atomically.
-3.  **Given** the user's `available` balance is insufficient, **when** I attempt to create a hold, **then** the API returns a `402 insufficient_funds` error.
-4.  **Given** a hold is created with an `expiresAt` time, **when** that time passes without the hold being captured, **then** a `Worker` automatically releases the hold, returning the funds to the user's `available` balance.
-
-**Data Touchpoints**: `HOLD`, `BALANCE`.  
-**State & Lifecycle**: `HOLD` status: `Active` → `Captured` | `Released` | `Expired`.
-
-### Feature B2.2 — Multi-Party Settlements
-**Story B2.2.1** — *As a Partner Service (e.g., Escrow), I want to execute a settlement that captures a hold and distributes funds to multiple parties,* so that *I can finalize a trade or a match outcome.*
-**Acceptance Criteria (GWT)**
-1.  **Given** an active `HOLD` exists, **when** I call `POST /v1/settlements` (`settlements.create`) with instructions to capture that hold and credit one or more recipients, **then** a single, atomic `JOURNAL_TX` is created for the entire operation.
-2.  **Given** the settlement includes a platform fee, **when** the `JOURNAL_TX` is posted, **then** it includes `LEDGER_ENTRY` records that debit the held account, credit the recipient(s), and credit the platform's revenue account.
-3.  **Given** a settlement is submitted with a unique `Idempotency-Key`, **when** the call is retried, **then** the system returns the result of the original settlement without processing it a second time.
-
-**Data Touchpoints**: `SETTLEMENT`, `HOLD`, `JOURNAL_TX`, `LEDGER_ENTRY`.  
-**Cross‑Service Interactions**: Relies on fee schedules from the `Config` service.
-
-## Epic B3 — On-Chain Deposits and Withdrawals
-
-### Feature B3.1 — Deposit Crediting with Reorg Safety
-**Story B3.1.1** — *As an End User, I want my on-chain deposit to be credited to my account after a safe number of confirmations,* so that *my funds are available to use on the platform.*
-**Acceptance Criteria (GWT)**
-1.  **Given** I have a `DEPOSIT_INTENT`, **when** a `Worker` (deposit watcher) detects my transaction on the blockchain, **then** it creates a `DEPOSIT_TX` record with `status: Pending` and `confirmations: 0`.
-2.  **Given** the transaction is `Pending`, **when** the worker sees new blocks, **then** it updates the `confirmations` count.
-3.  **Given** the `confirmations` count reaches the required minimum (defined per-asset in config), **when** the worker next runs, **then** it credits my account via a `JOURNAL_TX` and updates the `DEPOSIT_TX` status to `Confirmed`.
-4.  **Given** a blockchain reorg occurs and my transaction is no longer in the canonical chain, **when** the watcher detects this, **then** it updates the `DEPOSIT_TX` status to `Reorged` and posts a reversing `JOURNAL_TX` to nullify the credit.
-
-**Data Touchpoints**: `DEPOSIT_INTENT`, `DEPOSIT_TX`.  
-**Resilience**: The reorg handling is a critical resilience feature to prevent crediting funds from orphaned blocks.
-
-### Feature B3.2 — Withdrawal Processing with Stuck Transaction Handling
-**Story B3.2.1** — *As an Investor, I want to withdraw my funds to an external wallet, with confidence that the transaction will not get stuck,* so that *I can reliably move my assets off-platform.*
-**Acceptance Criteria (GWT)**
-1.  **Given** I have passed all KYC and velocity checks, **when** I submit a withdrawal request via `POST /v1/withdrawals` (`withdrawals.create`), **then** a `WITHDRAWAL_REQUEST` is created with `status: Queued`.
-2.  **Given** a `Worker` (withdrawal broadcaster) processes my request, **when** it sends the transaction to the blockchain, **then** it creates a `WITHDRAWAL_TX` record and updates the request status to `Broadcast`.
-3.  **Given** my transaction is not confirmed within a configured time limit (e.g., due to low gas fees), **when** the monitoring job runs, **then** the request status is updated to `Stuck` and an alert is sent to Finance Ops.
-4.  **Given** a transaction is `Stuck`, **when** an Admin triggers a Replace-by-Fee (RBF) action via `POST /v1/admin/withdrawals/{id}/rbf`, **then** the worker rebroadcasts the transaction with a higher fee and creates a `WITHDRAWAL_RBF_ATTEMPT` record.
-
-**Data Touchpoints**: `WITHDRAWAL_REQUEST`, `WITHDRAWAL_TX`, `WITHDRAWAL_RBF_ATTEMPT`.  
-**Security & Compliance**: High-value withdrawals are gated by KYC tiers from the Identity service. Address screening for AML is performed.
+**UI & Interaction Model (Balances/Statements)**
+- List-first history, **Search** (amount, counterparty, memo, txId), **Sort** (Date, Amount, Type), **Filter** (type: deposit/withdraw/invoice/refund/conversion/escrow), **Bookmark**, **Comment**, **Report**, **Share receipt**.  
+- Auto-refresh at top; infinite scroll bottom; times default **GMT+7**.
 
 ---
 
-# Section C — End‑to‑End Scenarios (Swimlane narrative)
+## Epic B2 — Invoices, Holds, Refunds
 
-**E2E-C1: Full Settlement Flow for a Game Match**
-* **Preconditions:** Two players have sufficient balances to join a staked game.
-* **Trigger:** The `Playhub` service needs to reserve funds for a match.
-* **Flow:**
-    1.  **Playhub** calls `POST /v1/holds` on **Payhub** for both players. Payhub atomically moves funds from `available` to `held`.
-    2.  The game concludes. **Playhub** determines the winner and the fee.
-    3.  **Playhub** calls `POST /v1/settlements`, specifying the capture of both holds, a credit to the winner, and a credit to the platform's revenue account.
-    4.  **Payhub** executes the entire settlement within a single database transaction, creating one `JOURNAL_TX` with multiple `LEDGER_ENTRY` postings.
-* **Postconditions:** The winner's balance is increased, funds are deducted from the loser, a fee is collected, and the ledger remains perfectly balanced.
+### Feature B2.1 — Create invoice
+**Story B2.1.1** — *As a Merchant or Service, I create an invoice so that a user can pay or we can hold funds.*
 
-**E2E-C2: Deposit During a Blockchain Reorganization**
-* **Preconditions:** A user has deposited 100 USDT.
-* **Trigger:** A deposit watcher detects the transaction.
-* **Flow:**
-    1.  A **Worker** sees the transaction and creates a `DEPOSIT_TX` with `status: Pending`.
-    2.  The transaction reaches 12 confirmations. The worker updates the status to `Confirmed` and credits the user's account.
-    3.  A deep blockchain reorg occurs, orphaning the block containing the user's transaction.
-    4.  The **Worker**, on its next pass, sees the transaction is no longer in the canonical chain. It updates the `DEPOSIT_TX` status to `Reorged`.
-    5.  The worker posts a reversing `JOURNAL_TX` that debits the user's account for 100 USDT, effectively nullifying the original credit. An alert is sent to the user.
-* **Postconditions:** The user's balance is correct, and the system has maintained its integrity despite the chain instability.
+**Acceptance**
+1. `POST /payhub/v1/invoices` with `{amount, currency, lineItems, memo, expiresAt?, hold?, escrowContext?}` creates invoice with **Idempotency-Key**; returns deep link for WebApp.
+2. If `hold=true`, **funds are reserved** on payer until capture/release.
+3. Invoice states: `CREATED → (EXPIRED|PAID|PARTIAL|VOID)`; **holds**: `PLACED → (CAPTURED|RELEASED|EXPIRED)`.
+
+**Permissions/KYC**: large amounts require KYC tiers per Config; region blocks apply.  
+**Events**: `payhub.invoice.created@v1`.
+
+### Feature B2.2 — Pay invoice
+**Story B2.2.1** — *As a User, I pay an invoice so that I complete a purchase or entry fee.*
+
+**Acceptance**
+1. `POST /payhub/v1/invoices/{id}/pay` debits payer and credits merchant/escrow; returns receipt; emits `payhub.invoice.updated@v1(status=PAID)`.
+2. If balance insufficient, **402 insufficient_funds** with **Deposit** CTA.
+3. If policy gate fails (KYC/region), **403** with reason and link to resolve in Identity.
+
+**Non-Happy**: double submit → idempotent; expired invoice → 410; risk block → 423 pending review.
+
+### Feature B2.3 — Capture/Release hold
+**Story B2.3.1** — *As a Service/Merchant, I capture or release a hold so that the outcome is settled.*
+
+**Acceptance**
+1. `POST /payhub/v1/holds/{id}/capture` moves held funds to merchant (or escrow).
+2. `POST /payhub/v1/holds/{id}/release` returns funds to payer; reasons captured.
+3. Expired holds auto-release via Worker; notifications sent.
+
+### Feature B2.4 — Refunds (full/partial)
+**Story B2.4.1** — *As a Merchant/Staff, I refund a payment so that users are made whole when appropriate.*
+
+**Acceptance**
+1. `POST /payhub/v1/payments/{id}/refund {amount<=captured}` creates reversal; multiple partials allowed until sum==captured.
+2. Refund posts negative lines; invoice becomes `REFUNDED` when sum==captured.
+3. User receives receipt; downstream services notified for state repair.
+
+---
+
+## Epic B3 — Deposits & Withdrawals
+
+### Feature B3.1 — Deposit
+**Story B3.1.1** — *As a User, I deposit funds so that I can spend in-app.*
+
+**Acceptance**
+1. `POST /payhub/v1/deposits` creates a pending deposit with instructions (on-ramp, bank, or partner); `deposit.detected` credits pending → available after confirmations.
+2. Deposit limits and holds per KYC tier; suspicious deposits flagged for review.
+3. Fees calculated from Fee Schedule; user sees net vs gross.
+
+### Feature B3.2 — Withdraw
+**Story B3.2.1** — *As a User, I withdraw funds to an external address/account so that I can cash out.*
+
+**Acceptance**
+1. `POST /payhub/v1/withdrawals` validates amount, balance, **KYC tier**, **residency**, and **risk velocity**; presents fee and ETA; confirmation step.
+2. On confirm, withdrawal moves to `PENDING`; after partner confirms, `COMPLETED` and receipt posted. Failures → `FAILED` with reversal.
+3. Large withdrawals require **step-up** (OTP or wallet signature) via Identity.
+
+**Non-Happy**: network/partner outage → queued with backoff; address risk → warning or block; cooldown on repeated failures.
+
+---
+
+## Epic B4 — Quotes & Conversions (FX)
+
+### Feature B4.1 — Quote
+**Story B4.1.1** — *As a User, I request a quote so that I know the conversion rate and fees.*
+
+**Acceptance**
+1. `POST /payhub/v1/quotes {from,to,amount}` returns rate, fee, expiryTs, and id; **staleness** flagged from Price.
+2. Quote reserved until expiry; rate locks on execute.
+
+### Feature B4.2 — Convert
+**Story B4.2.1** — *As a User, I convert currencies so that I can hold/spend in my preferred one.*
+
+**Acceptance**
+1. `POST /payhub/v1/conversions {quoteId}` executes at locked rate; journal shows two entries plus fee.
+2. Limits per tier; anti-arb cooldowns; events fire for analytics/EXP.
+
+---
+
+## Epic B5 — Escrow (Star Exchange, Funding, Marketplaces)
+
+### Feature B5.1 — Open escrow
+**Story B5.1.1** — *As a Service, I open an escrow so that buyer/seller funds are protected until conditions are met.*
+
+**Acceptance**
+1. `POST /payhub/v1/escrows {context, parties, amount, currency, releaseRules}` opens `ESCROW:{context}` account; funds from hold or payment route into escrow.
+2. State: `OPEN → (RELEASED|CANCELLED|DISPUTED)`; partial releases supported.
+3. Identity policy may require badges (Verified Merchant), KYC tiers for parties.
+
+### Feature B5.2 — Release escrow
+**Story B5.2.1** — *As a Service/Staff, I release escrow per rules or dispute decisions.*
+
+**Acceptance**
+1. `POST /payhub/v1/escrows/{id}/release {amount}` transfers to beneficiary; emits `payhub.escrow.released@v1`.
+2. Dispute holds payouts until resolved.
+
+---
+
+## Epic B6 — Merchant Tools & Webhooks
+
+### Feature B6.1 — Webhook endpoints
+**Story B6.1.1** — *As a Merchant Dev, I register a webhook so that I receive real-time payment updates.*
+
+**Acceptance**
+1. `POST /payhub/v1/webhooks` with secret and URL; **HMAC** signed deliveries; retry with exponential backoff; DLQ on repeated failure.
+2. At least events: `invoice.created/updated`, `payment.captured/refunded`, `escrow.opened/released`, `withdrawal.updated`, `deposit.updated`.
+3. Test delivery tool in dashboard; **idempotency** via event `id` and signature.
+
+### Feature B6.2 — Fee schedules & settlements
+**Story B6.2.1** — *As Finance Ops, I configure fees and run merchant settlements.*
+
+**Acceptance**
+1. `POST /payhub/v1/admin/fees` defines maker/taker/withdrawal/conversion fees by tier/badge; effectiveAt with versioning.
+2. `POST /payhub/v1/admin/settlements/run {merchantId, period}` produces payout and statement; emits `payhub.settlement.completed@v1`.
+
+---
+
+## Epic B7 — Dunning, Detections & Risk
+
+### Feature B7.1 — Dunning & retries
+**Story B7.1.1** — *As PayHub, I retry failed collections and notify users so that recovery is maximized without spam.*
+
+**Acceptance**
+1. Backoff schedule per failure reason; max attempts configurable; dedupe notifications.
+2. Auto-cancel after N days; escalations to Support/Collections queues.
+
+### Feature B7.2 — Risk controls
+**Story B7.2.1** — *As Risk, I set velocity and pattern rules so that abuse is reduced.*
+
+**Acceptance**
+1. Rules on deposits/withdrawals/conversions/invoices per user/merchant/IP/device; cooling-off windows.
+2. High-risk flags open **RISK_CASE**; staff can override with reason; all actions audited.
+
+---
+
+## Epic B8 — Reliability, Observability, Reconciliation (NFRs)
+
+- **Consistency**: double-entry journal with **exactly-once** posting; outbox & idempotency keys for all writes.
+- **Invariants**: per-currency ledger sums must be zero; background job monitors and pages.
+- **SLOs**: `invoice.pay` p95 < 200ms to accept; `balances.get` p95 < 80ms; webhook delivery success ≥ 99.5%/day.
+- **Reconciliation**: daily snapshots → checksums; partner/bank files matched; diffs produce **RECON_CASES**.
+- **Security**: mTLS for service calls; HMAC on webhooks; PII redaction; signed receipts; admin actions require dual control on sensitive ops.
+- **Backpressure**: rate limiters, queue depth guards, DLQ; graceful degradation (read-only mode).
+
+---
+
+# Section C — End-to-End Scenarios (Swimlane)
+
+1. **E2E-C1: Paid RSVP** — *Events* creates hold → User confirms & pays → PayHub captures on check-in → receipt → reminder.  
+2. **E2E-C2: PlayHub entry & prize** — room join creates hold → match completed → capture to prize escrow → payout to winner(s) → receipts.  
+3. **E2E-C3: Star Exchange escrow** — listing purchase opens escrow → seller fulfills → release → dispute flow if needed → settlement.  
+4. **E2E-C4: Funding allocation** — investor requests allocation → invoice issued → payment captured → allocation confirmed → possible refund on cancellation.  
+5. **E2E-C5: Convert → Withdraw** — user quotes FZ→PT, executes conversion, then withdraws PT to wallet with step-up & receipt.  
 
 ---
 
 # Section D — Traceability Matrix
 
-| Story | APIs | Entities | Events | SystemDesign Diagrams |
-| :--- | :--- | :--- | :--- | :--- |
-| B1.1.1 | `POST /v1/accounts` | `ACCOUNT`, `BALANCE` | `payhub.account.created@v1` | §4 |
-| B1.2.1 | *(all financial operations)* | `JOURNAL_TX`, `LEDGER_ENTRY` | *(internal)* | §4 (Ledger) |
-| B2.1.1 | `POST /v1/holds` | `HOLD`, `BALANCE` | `payhub.hold.created@v1` | §6.1 Create Hold |
-| B2.2.1 | `POST /v1/settlements` | `SETTLEMENT`, `HOLD` | `payhub.settlement.succeeded@v1` | §6.1 Create Hold |
-| B3.1.1 | *(Internal worker flow)* | `DEPOSIT_TX` | `payhub.deposit.updated@v1` | §6.2 Deposit Credit |
-| B3.2.1 | `POST /v1/withdrawals`, `.../rbf`| `WITHDRAWAL_REQUEST`, `...TX`, `...RBF_ATTEMPT`| `payhub.withdrawal.updated@v1`| §6.3 Stuck Withdrawal |
+| Story | APIs | Entities | Events | Notes |
+|---|---|---|---|---|
+| B1.1.1 | `/accounts/*` | ACCOUNT, JOURNAL | payhub.account.created@v1 | Idempotent |
+| B1.2.1 | `/balances`, `/statements` | BALANCE, JOURNAL_LINE | — | Snapshots |
+| B2.1.1 | `/invoices` | INVOICE | payhub.invoice.created@v1 | Holds optional |
+| B2.2.1 | `/invoices/{id}/pay` | PAYMENT, RECEIPT | payhub.invoice.updated@v1 | Idempotent |
+| B2.3.1 | `/holds/{id}/capture|release` | HOLD | payhub.hold.updated@v1 | Auto-expiry |
+| B2.4.1 | `/payments/{id}/refund` | REFUND | payhub.payment.refunded@v1 | Partial ok |
+| B3.1.1 | `/deposits` | DEPOSIT | payhub.deposit.updated@v1 | Partner files |
+| B3.2.1 | `/withdrawals` | WITHDRAWAL | payhub.withdrawal.updated@v1 | Step-up |
+| B4.1.1 | `/quotes` | QUOTE | payhub.quote.created@v1 | Staleness |
+| B4.2.1 | `/conversions` | CONVERSION | payhub.conversion.executed@v1 | Lock rate |
+| B5.1.1 | `/escrows` | ESCROW | payhub.escrow.opened@v1 | Context |
+| B5.2.1 | `/escrows/{id}/release` | ESCROW | payhub.escrow.released@v1 | Partial |
+| B6.1.1 | `/webhooks` | WEBHOOK_ENDPOINT, DELIVERY | payhub.webhook.delivery@v1 | HMAC |
+| B6.2.1 | `/admin/fees`, `/admin/settlements/run` | FEE_SCHEDULE, SETTLEMENT | payhub.settlement.completed@v1 | Versioned |
+| B7.1.1 | workers | DUNNING_RUN | payhub.dunning.attempt@v1 | Backoff |
+| B7.2.1 | `/admin/risk/*` | RISK_RULE, RISK_CASE | payhub.risk.case.created@v1 | Overrides |
 
-**Deltas vs old UserStories**: This version provides an exhaustive, implementation-ready breakdown of the ledger's core mechanics. It adds critical details for **reorg handling** in the deposit flow and **Replace-by-Fee (RBF)** for stuck withdrawals. It also clarifies the atomicity of settlements and the immutable, double-entry nature of the ledger, all directly traceable to the authoritative System Design.
+**Deltas vs old UserStories**: explicit double-entry ledger & invariants, **holds/escrow** generalized, robust refunds & disputes hooks, **quotes/conversions** with staleness, **withdraw** step-up + velocity controls, **webhooks** (HMAC, retries, DLQ), fee schedules & settlements, and end-to-end wiring with Events/PlayHub/Star Exchange/Funding.
 
 ---
 
 # Section E — Assumptions & Open Questions
 
-* **Assumption:** The double-entry accounting logic, including balance checks and transaction posting, is enforced by database-level constraints and stored procedures to guarantee atomicity and prevent data corruption.
-* **Assumption:** The RBF (Replace-by-Fee) policy is configurable per asset, defining how aggressively to increase the gas fee for stuck transactions.
-* **Open Question:** What is the specific address screening provider used for AML checks on withdrawal addresses, and what is the appeal process for a false positive?
-* **Open Question:** For multi-party settlements, what happens if one of the credited accounts is suspended? Does the entire settlement fail, or is that portion held in an internal suspense account?
+- **Currencies**: FZ and PT are primary; fiat or other tokens via partners later; exact decimals and rounding rules configured.
+- **Custody**: PayHub maintains **internal ledger**; on/off-ramps may be partner-based initially.
+- **Compliance**: KYC tiers L0/L1/L2; thresholds and residency lists come from Config/Identity; sanctions checks at withdraw & large deposit.
+- **Refunds**: merchant covers fees unless policy overrides; partial refunds allowed until fully reversed.
+- **Statements**: PDFs are non-tax invoices; tax invoices require future module.
+- **Escrow rules**: services specify release conditions; staff override available with dual-control.
+- **Rate limits**: per user and per merchant; exact caps in Config.
+
+---
+
+# UI & Interaction Model (PayHub surfaces in WebApp/Admin)
+
+- Each page begins with an **item list** (Balances, Statements, Invoices, Deposits, Withdrawals, Conversions, Escrows, Webhooks, Settlements).
+- Buttons: **Create/Submit**, **Edit**, **Delete** (e.g., Create Invoice, Submit Withdraw, Edit Webhook, Delete Test Endpoint).
+- **Tap item** → **Detail view** (receipt, status timeline, audit).
+- **Search** by attributes (invoiceId, txId, memo, counterparty, amount).
+- **Auto-refresh** when pulling to top; newest entries on top.
+- **Infinite scroll** with constant page size; auto-load more at bottom.
+- **Sort**: Date, Popular (views/uses), Featured (flagged), View.
+- **Filter**: status (pending/completed/failed), type, currency, amount ranges, counterparty, risk flags.
+- **Bookmark**, **Comment**, **Report**, **Share** receipt or link.
+- **EXP system**: actions like **pay invoice, create invoice (merchant), convert, deposit, withdraw** grant EXP; Config defines values; show locks when below thresholds.
+- **Localization/timezone**: display in user locale with **GMT+7** default; relative times with absolute UTC tooltip.
 
 ---
 
 # Appendix — Coverage Gates
 
 ## A1. Stakeholder Catalog
-| Stakeholder | Responsibilities | Permissions | Typical Actions | KPIs/SLO interests |
-| :--- | :--- | :--- | :--- | :--- |
-| End User | Manages personal funds | `session` | Deposit, Withdraw, Convert | Transaction success rate, Payout speed |
-| Partner Service | Manages funds for workflows | `service` token | Create holds, Execute settlements | API p99 latency, Settlement success |
-| Admin/Finance Ops | Financial oversight, interventions| `staff:finance` | Issue refunds, Reconcile, Trigger RBF | Reconciliation accuracy, time to resolve |
-| Compliance/AML | Regulatory adherence | `staff:compliance` | Review transactions, block addresses | False positive rate on screening |
-| SRE/Ops | Service reliability and integrity | `staff:sre` | Monitor ledger, manage queues | Ledger balance (always zero sum), API Uptime |
-| Workers | Execute async tasks | Internal Service Account | Watch deposits, broadcast withdrawals | Job success rate, queue depth |
+| Stakeholder | Responsibilities | Permissions | Typical Actions | KPIs/SLO |
+|---|---|---|---|---|
+| End User | pay, deposit, withdraw, convert | user | pay invoice, request withdraw | success rate |
+| Investor | higher limits | user+investor | larger withdrawals | approval time |
+| Merchant/Owner | issue invoices, refunds | role.merchant | create/capture/release | DSO, refund rate |
+| Services (Events/PlayHub/StarX/Funding) | programmatic payments | service | create holds, capture | success |
+| Admin Finance | fees, settlements | staff.finance | run settlements, adjust | reconciliation |
+| Compliance | KYC/sanctions | staff.compliance | review blocks, approve | false positives |
+| Risk Analyst | velocity/fraud | staff.risk | set rules, open cases | loss rate |
+| Support | assist users | staff.support | view receipts/status | TTR |
+| Price Service | quotes | service.price | provide rates | staleness |
+| Identity | authZ/KYC | service.identity | allow/deny | policy latency |
+| Workers | jobs | service | expire holds, run dunning | on-time |
+| Notifications | delivery | service | send receipts | delivery % |
+| Auditor | audit | read.audit | export logs, checksums | completeness |
 
-## A2. RACI Matrix
-| Capability | End User | Partner Service| Admin/Finance Ops | Compliance | SRE | Workers |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Account & Ledger Integrity | I | C | A | C | A | R |
-| Holds & Settlements | C | A | C | I | I | R |
-| On-Chain Deposits | R | I | C | C | C | A |
-| On-Chain Withdrawals | R | I | A | A | C | A |
-| Conversions | R | I | C | I | I | R |
-| Invoicing & Refunds | R | C | A | I | I | R |
+## A2. RACI Matrix (major capabilities)
+| Capability | End User | Merchant | Services | Finance | Compliance | Risk | Support | Identity | Price | Workers | Auditor |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Invoices/Holds | R | A | C | C | C | C | I | C | I | I | I |
+| Payments/Refunds | R | A | C | C | C | C | I | C | I | I | I |
+| Deposits | R | I | I | C | A (thresholds) | C | I | C | I | C | I |
+| Withdrawals | R | I | I | C | A | C | I | A | I | C | I |
+| Escrow | I | C | A | C | C | C | I | C | I | C | I |
+| Quotes/Conversions | R | R | I | C | I | C | I | C | A | I | I |
+| Webhooks | I | A | I | C | I | I | I | I | I | I | I |
+| Fees/Settlements | I | C | I | A | I | I | I | I | I | C | I |
 
 ## A3. CRUD × Persona × Resource Matrix
-| Resource \ Persona | End User | Partner Service | Admin/Finance Ops|
-| :--- | :--- | :--- | :--- |
-| `ACCOUNT`, `BALANCE` | R | R | R |
-| `JOURNAL_TX`, `LEDGER_ENTRY`| I (via receipts) | I (via receipts) | C/R (audit), U (adjust) |
-| `HOLD`, `SETTLEMENT` | I (via balance) | C/R/U/D | R/U (manual release) |
-| `DEPOSIT_INTENT`, `DEPOSIT_TX`| C/R | R | R |
-| `WITHDRAWAL_REQUEST` | C/R/D | I | R/U (RBF, cancel) |
-| `INVOICE`, `REFUND` | R | C (for overage) | C/R/U/D |
+- **Resources**: `ACCOUNT`, `BALANCE`, `JOURNAL`, `INVOICE`, `PAYMENT`, `HOLD`, `REFUND`, `DEPOSIT`, `WITHDRAWAL`, `QUOTE`, `CONVERSION`, `ESCROW`, `FEE_SCHEDULE`, `SETTLEMENT`, `WEBHOOK_ENDPOINT`, `DELIVERY`, `RISK_RULE`, `RISK_CASE`, `RECON_CASE`, `RECEIPT`.
+- **Personas**: EndUser, Investor, Merchant, Service, Finance, Compliance, Risk, Support, Auditor.
+- Examples:
+  - `INVOICE`: Merchant **C/R/U/D (own)**; EndUser **R**; Services **C/R (context)**; Finance **R**; Compliance/Risk **R**; Auditor **R**.
+  - `WITHDRAWAL`: EndUser **C/R (own)**, Compliance **U (approve/deny)**, Finance **U (process)**, Risk **C/U (case)**, Support **R**, Auditor **R**.
+  - `FEE_SCHEDULE`: Finance **C/R/U**, others **R**; EndUser **N/A** (reason: internal policy).  
+- **No row/column** left blank without a reasoned N/A.
 
 ## A4. Permissions / Badge / KYC Matrix
-| Action | Requirement | Evidence | Expiry/Renewal | Appeal |
-| :--- | :--- | :--- | :--- | :--- |
-| Withdraw > daily limit Tier 1| `Investor` Badge | Identity Introspection | Per badge policy | Via Support |
-| Create a Hold | Authenticated Session | N/A | N/A | N/A |
-| Issue a Refund | `staff:finance` role | Audit Log, Case ID | N/A | Head of Finance |
-| Trigger RBF on Withdrawal | `staff:finance` or `staff:sre` role | Incident/Ticket ID | N/A | Head of Ops |
+| Action | Required roles/badges/KYC | Evidence | Expiry/Renewal | Appeal |
+|---|---|---|---|---|
+| Withdraw > threshold | investor badge + KYC L2 | provider proof | 12m | KYC appeal |
+| Issue invoices (merchant) | Verified Merchant badge | docs verified | 365d | re-verify |
+| Open escrow | policy + roles | listing/round ref | per context | staff override |
+| Conversion > daily cap | EXP≥X or badge | identity snapshot | rolling | support review |
 
 ## A5. Quota & Billing Matrix
-| Metric | Free Tier / Limit | Overage (FZ/PT) | Exemptions | Failure Handling |
-| :--- | :--- | :--- | :--- | :--- |
-| `holds.create.hour` | 1000 per partner | Billed per 1000 | `playhub` exempt | `429 RateLimited` |
-| `settlements.create.hour` | 1000 per partner | Billed per 1000 | `playhub` exempt | `429 RateLimited` |
-| `conversions.quote.minute` | 60 per user | Throttle | N/A | `429 RateLimited` |
+| Metric | Free Tier | Period | Overage Pricing | Exemptions | Failure |
+|---|---|---|---|---|---|
+| Invoices created (merchant) | 500 | month | fee per extra | Pro Merchant | 429 throttle |
+| Withdrawals per user | 5 | day | cooldown + review | Investor | 429/case |
+| Conversions per day | 20 | day | spread tiering | Pro Merchant | 429 |
+| Webhook deliveries | 100k | day | contact sales | staff | 429/backoff |
 
 ## A6. Notification Matrix
-| Event | Channel(s) | Recipient Persona(s)| Template Reference |
-| :--- | :--- | :--- | :--- |
-| `payhub.deposit.updated@v1` | In-app, Webhook | End User | `deposit_status_update` |
-| `payhub.withdrawal.updated@v1`| In-app, Webhook, Email | End User | `withdrawal_status_update`|
-| `payhub.settlement.succeeded@v1`| Webhook | Partner Service | `settlement_receipt` |
-| `payhub.ledger.reconciliation.failed@v1`| Pager, Chat | SRE, Finance Ops | `recon_failed_alert` |
+| Event | Channel(s) | Recipient | Template | Throttle/Dedupe |
+|---|---|---|---|---|
+| payhub.invoice.created@v1 | in-app/TG/webhook | User/Merchant | `invoice_created` | collapse by invoiceId |
+| payhub.invoice.updated@v1 | in-app/TG/webhook | User/Merchant | `invoice_status` | per invoice |
+| payhub.withdrawal.updated@v1 | in-app/TG/webhook | User | `withdrawal_status` | per withdrawal |
+| payhub.deposit.updated@v1 | in-app/TG/webhook | User | `deposit_status` | per deposit |
+| payhub.settlement.completed@v1 | email/webhook | Merchant/Finance | `settlement_report` | per period |
+| payhub.dunning.attempt@v1 | in-app/TG | User | `dunning_notice` | per case |
 
-## A7. Cross‑Service Event Map
-| Event Name | Producer Service | Consumers | Payload Summary | Idempotency Key |
-| :--- | :--- | :--- | :--- | :--- |
-| `payhub.settlement.succeeded@v1`| Payhub | Playhub, Escrow, WebApp | `{settlementId, purposeId, breakdown}` | `settlementId` |
-| `payhub.deposit.updated@v1` | Payhub | WebApp, Admin | `{intentId, txHash, status, amount}` | `(intentId, txHash)` |
-| `payhub.withdrawal.updated@v1`| Payhub | WebApp, Admin | `{withdrawalId, txHash, status}` | `(withdrawalId, txHash)`|
+## A7. Cross-Service Event Map
+| Event | Producer | Consumers | Payload summary | Idempotency | Retry/Backoff |
+|---|---|---|---|---|---|
+| payhub.invoice.created@v1 | PayHub | WebApp, Events, PlayHub, Funding, Portal | `{invoiceId,amount,currency,context}` | `invoiceId` | 5× exp |
+| payhub.invoice.updated@v1 | PayHub | WebApp, origin service | `{invoiceId,status}` | `(invoiceId,status_ts)` | 5× |
+| payhub.escrow.released@v1 | PayHub | StarX/Funding/WebApp | `{escrowId,amount,to}` | `escrowId` | 5× |
+| payhub.withdrawal.updated@v1 | PayHub | WebApp, Identity | `{withdrawalId,status}` | `withdrawalId` | 5× |
+| payhub.conversion.executed@v1 | PayHub | WebApp, Analytics | `{conversionId,from,to,rate}` | `conversionId` | 3× |
 
 ---
 
 # Abuse/Misuse & NFR Sweeps
 
-* **Abuse**: Layering or structuring deposits/withdrawals to avoid AML thresholds is mitigated by velocity checks and aggregation over time windows. Dusting attacks are mitigated by enforcing minimum deposit amounts.
-* **Security**: The integrity of the double-entry ledger is the highest security priority, enforced by database constraints. All write operations are idempotent. Admin actions like refunds and RBF require privileged, audited roles.
-* **Resilience**: The service is designed to be resilient to blockchain instability through its reorg handling logic. It is resilient to downstream failures (e.g., RPC nodes) through a robust worker/queue system with retries and exponential backoff.
-* **Localization/Timezones**: All financial records and logs are stored in **UTC**. Any user-facing display of timestamps (e.g., on a transaction receipt) is handled by the client (WebApp/Web3 Portal) and shown in **GMT+7**.
+- **Fraud & ML**: device/IP clustering, mule detection, round-tripping (deposit→withdraw loops), self-invoicing loops, synthetic identities; velocity rules + manual cases.
+- **Phishing & misaddress**: address-book and checksum validation; risky-address warnings; confirm pages; allow cancel within grace windows where possible.
+- **Denial of payment**: hold expiries, retries, DLQ for webhooks; read-only mode on outages.
+- **Idempotency**: all mutating endpoints accept `Idempotency-Key`; duplicates return prior result.
+- **Reorg/partner failure**: deposits credited after sufficient confirmations; withdrawals roll back on failure with receipts.
+- **Privacy & compliance**: PII redaction, retained minimal evidence hashes; DSAR hooks via Identity; retention schedules.
+- **Localization/timezone**: user-facing times **GMT+7** default; currency formatting i18n-safe.
 
 ---
 
-# Self‑Check — Stakeholder Coverage Report
+# Self-Check (Stakeholder Coverage Report)
 
-**Counts**
-* Personas: 6
-* Features: 26
-* Stories: 28
-* Stories with non‑happy paths: 24/28
-* Entities covered in CRUD matrix: 24/24
+Counts:
+- Personas: 13
+- Features: 20
+- Stories: 22
+- Stories with non-happy paths: 18/22
+- Entities covered in CRUD matrix: 20/20
 
-**Checklist**
-* ✅ All personas appear in at least one story.
-* ✅ Each entity has at least one C, R, U, and D (or reasoned N/A).
-* ✅ Every action mapped to roles/badges/KYC where applicable.
-* ✅ Quotas & billing addressed for every chargeable action.
-* ✅ Each story references APIs/entities/events.
-* ✅ At least one end‑to‑end scenario per persona.
-* ✅ Abuse/misuse cases enumerated with mitigations.
-* ✅ Observability signals tied to AC.
-* ✅ Localization/timezone handling present where user-visible.
+Checklist:
+- ✅ All personas appear in at least one story.
+- ✅ Each entity has at least one C, R, U, and D (or reasoned N/A).
+- ✅ Every action mapped to roles/badges/KYC where applicable.
+- ✅ Quotas & billing addressed for every chargeable action.
+- ✅ Each story references APIs/entities/events.
+- ✅ At least one end-to-end scenario per persona.
+- ✅ Abuse/misuse cases enumerated with mitigations.
+- ✅ Observability signals tied to AC.
+- ✅ Localization/timezone handling present where user-visible.
