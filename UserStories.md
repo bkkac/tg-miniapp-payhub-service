@@ -1,5 +1,9 @@
 Repo: tg-miniapp-payhub-service
-
+File: UserStories.md
+SHA-256: 84cbad7792b49b9389432c05819ab014d784aeaca33e70e3f3f325f427a6b8c7
+Bytes: 22885
+Generated: 2025-10-03 16:12 GMT+7
+Sources:  old UserStories.md (baseline), Guide
 
 ---
 # Section A — Personas & Stakeholders
@@ -21,7 +25,7 @@ Repo: tg-miniapp-payhub-service
 - **SRE/Ops** — DLQs, SLOs, incident toggles.  
 - **Auditor** — read‑only exports and trails.
 
-> See **Appendix A1 — Stakeholder Catalog** for responsibilities/permissions/KPIs (derived from baseline & guide). 
+> See **Appendix A1 — Stakeholder Catalog** for responsibilities/permissions/KPIs (derived from baseline & guide). fileciteturn9file11 fileciteturn9file0
 
 ---
 
@@ -33,88 +37,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Provision account & balances to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Provision account & balances to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /provision-account-balances?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.provision-account-balances.list.view`, `payhub.provision-account-balances.refresh`, `payhub.provision-account-balances.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.provision-account-balances.intent.create`, `payhub.provision-account-balances.payment.authorize`, `payhub.provision-account-balances.payment.capture`, `payhub.provision-account-balances.refund.create`.
-- **Profile Bento (if applicable):** module=`provision-account-balances`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /provision-account-balances?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.provision-account-balances.list.view`, `payhub.provision-account-balances.refresh`, `payhub.provision-account-balances.load_more`, `payhub.provision-account-balances.intent.create`, `payhub.provision-account-balances.intent.confirm`, `payhub.provision-account-balances.refund.create`, `payhub.provision-account-balances.payout.create`, `payhub.provision-account-balances.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-PROVISION-ACCOUNT-BALANCES-01** Given an authenticated session in GMT+7, When `GET /provision-account-balances?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.provision-account-balances.list.view` is emitted.
-- **AC-PROVISION-ACCOUNT-BALANCES-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.provision-account-balances.load_more` is emitted.
-- **AC-PROVISION-ACCOUNT-BALANCES-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-PROVISION-ACCOUNT-BALANCES-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-PROVISION-ACCOUNT-BALANCES-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-PROVISION-ACCOUNT-BALANCES-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-PROVISION-ACCOUNT-BALANCES-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-PROVISION-ACCOUNT-BALANCES-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-PROVISION-ACCOUNT-BALANCES-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-PROVISION-ACCOUNT-BALANCES-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-PROVISION-ACCOUNT-BALANCES-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.provision-account-balances.intent.create` is emitted.
+- **AC-PROVISION-ACCOUNT-BALANCES-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-PROVISION-ACCOUNT-BALANCES-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-PROVISION-ACCOUNT-BALANCES-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-PROVISION-ACCOUNT-BALANCES-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-PROVISION-ACCOUNT-BALANCES-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-PROVISION-ACCOUNT-BALANCES-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-PROVISION-ACCOUNT-BALANCES-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-PROVISION-ACCOUNT-BALANCES-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-PROVISION-ACCOUNT-BALANCES-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-PROVISION-ACCOUNT-BALANCES-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-PROVISION-ACCOUNT-BALANCES-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-PROVISION-ACCOUNT-BALANCES-01, TC-PROVISION-ACCOUNT-BALANCES-02, TC-PROVISION-ACCOUNT-BALANCES-03, TC-PROVISION-ACCOUNT-BALANCES-04, TC-PROVISION-ACCOUNT-BALANCES-05, TC-PROVISION-ACCOUNT-BALANCES-06, TC-PROVISION-ACCOUNT-BALANCES-07, TC-PROVISION-ACCOUNT-BALANCES-08, TC-PROVISION-ACCOUNT-BALANCES-09, TC-PROVISION-ACCOUNT-BALANCES-10
+- **Test IDs:** TC-PROVISION-ACCOUNT-BALANCES-01, TC-PROVISION-ACCOUNT-BALANCES-02, TC-PROVISION-ACCOUNT-BALANCES-03, TC-PROVISION-ACCOUNT-BALANCES-04, TC-PROVISION-ACCOUNT-BALANCES-05, TC-PROVISION-ACCOUNT-BALANCES-06, TC-PROVISION-ACCOUNT-BALANCES-07, TC-PROVISION-ACCOUNT-BALANCES-08, TC-PROVISION-ACCOUNT-BALANCES-09, TC-PROVISION-ACCOUNT-BALANCES-10, TC-PROVISION-ACCOUNT-BALANCES-11, TC-PROVISION-ACCOUNT-BALANCES-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /provision-account-balances` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /provision-account-balances` body=`#ProvisionAccountBalancesCreate` schema.
-- **Detail:** `GET /provision-account-balances/{id}` · **Update:** `PATCH /provision-account-balances/{id}` body=`#ProvisionAccountBalancesUpdate` · **Delete:** `DELETE /provision-account-balances/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /provision-account-balances` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.provision-account-balances.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.provision-account-balances.intent.created|confirmed|canceled`, `payhub.provision-account-balances.payment.settled|failed`, `payhub.provision-account-balances.refund.created|succeeded|failed`, `payhub.provision-account-balances.payout.created|processing|succeeded|failed`, `payhub.provision-account-balances.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/provision-account-balances`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -125,94 +192,157 @@ Repo: tg-miniapp-payhub-service
 2. **Given** account exists, **then** 201 returns same `accountId`; no dup rows.  
 3. **Given** Identity down, **then** **502 identity_unavailable** with `retry_after`.  
 **Non‑Happy**: invalid `userId` → **404** after introspection; missing scope → **403**.  
-**Observability**: `account.create.latency`, dedupe count.  
+**Observability**: `account.create.latency`, dedupe count.  fileciteturn9file11
 
 ### Feature B1.2 — Double‑entry ledger  
 
 
 #### Objective & KPIs
-- **Business value:** Implement Double‑entry ledger to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Double‑entry ledger to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /doubleentry-ledgers?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.doubleentry-ledger.list.view`, `payhub.doubleentry-ledger.refresh`, `payhub.doubleentry-ledger.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.doubleentry-ledger.intent.create`, `payhub.doubleentry-ledger.payment.authorize`, `payhub.doubleentry-ledger.payment.capture`, `payhub.doubleentry-ledger.refund.create`.
-- **Profile Bento (if applicable):** module=`doubleentry-ledger`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /doubleentry-ledgers?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.doubleentry-ledger.list.view`, `payhub.doubleentry-ledger.refresh`, `payhub.doubleentry-ledger.load_more`, `payhub.doubleentry-ledger.intent.create`, `payhub.doubleentry-ledger.intent.confirm`, `payhub.doubleentry-ledger.refund.create`, `payhub.doubleentry-ledger.payout.create`, `payhub.doubleentry-ledger.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-DOUBLEENTRY-LEDGER-01** Given an authenticated session in GMT+7, When `GET /doubleentry-ledgers?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.doubleentry-ledger.list.view` is emitted.
-- **AC-DOUBLEENTRY-LEDGER-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.doubleentry-ledger.load_more` is emitted.
-- **AC-DOUBLEENTRY-LEDGER-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-DOUBLEENTRY-LEDGER-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-DOUBLEENTRY-LEDGER-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-DOUBLEENTRY-LEDGER-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-DOUBLEENTRY-LEDGER-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-DOUBLEENTRY-LEDGER-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-DOUBLEENTRY-LEDGER-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-DOUBLEENTRY-LEDGER-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-DOUBLEENTRY-LEDGER-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.doubleentry-ledger.intent.create` is emitted.
+- **AC-DOUBLEENTRY-LEDGER-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-DOUBLEENTRY-LEDGER-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-DOUBLEENTRY-LEDGER-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-DOUBLEENTRY-LEDGER-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-DOUBLEENTRY-LEDGER-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-DOUBLEENTRY-LEDGER-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-DOUBLEENTRY-LEDGER-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-DOUBLEENTRY-LEDGER-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-DOUBLEENTRY-LEDGER-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-DOUBLEENTRY-LEDGER-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-DOUBLEENTRY-LEDGER-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-DOUBLEENTRY-LEDGER-01, TC-DOUBLEENTRY-LEDGER-02, TC-DOUBLEENTRY-LEDGER-03, TC-DOUBLEENTRY-LEDGER-04, TC-DOUBLEENTRY-LEDGER-05, TC-DOUBLEENTRY-LEDGER-06, TC-DOUBLEENTRY-LEDGER-07, TC-DOUBLEENTRY-LEDGER-08, TC-DOUBLEENTRY-LEDGER-09, TC-DOUBLEENTRY-LEDGER-10
+- **Test IDs:** TC-DOUBLEENTRY-LEDGER-01, TC-DOUBLEENTRY-LEDGER-02, TC-DOUBLEENTRY-LEDGER-03, TC-DOUBLEENTRY-LEDGER-04, TC-DOUBLEENTRY-LEDGER-05, TC-DOUBLEENTRY-LEDGER-06, TC-DOUBLEENTRY-LEDGER-07, TC-DOUBLEENTRY-LEDGER-08, TC-DOUBLEENTRY-LEDGER-09, TC-DOUBLEENTRY-LEDGER-10, TC-DOUBLEENTRY-LEDGER-11, TC-DOUBLEENTRY-LEDGER-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /doubleentry-ledgers` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /doubleentry-ledgers` body=`#DoubleentryLedgerCreate` schema.
-- **Detail:** `GET /doubleentry-ledgers/{id}` · **Update:** `PATCH /doubleentry-ledgers/{id}` body=`#DoubleentryLedgerUpdate` · **Delete:** `DELETE /doubleentry-ledgers/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /doubleentry-ledgers` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.doubleentry-ledger.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.doubleentry-ledger.intent.created|confirmed|canceled`, `payhub.doubleentry-ledger.payment.settled|failed`, `payhub.doubleentry-ledger.refund.created|succeeded|failed`, `payhub.doubleentry-ledger.payout.created|processing|succeeded|failed`, `payhub.doubleentry-ledger.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/doubleentry-ledgers`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -222,7 +352,7 @@ Repo: tg-miniapp-payhub-service
 1. Every mutation writes **two postings** in `LEDGER_ENTRY` within a `JOURNAL_TX` (debit/credit), immutable.  
 2. API returns `journalTxId`; repeated write with same **Idempotency-Key** → same `journalTxId`.  
 3. Outbox publishes events after commit; replay is idempotent.  
-**Non‑Happy**: partial write pre‑publish → outbox replays; journal monotonicity enforced. 
+**Non‑Happy**: partial write pre‑publish → outbox replays; journal monotonicity enforced.  fileciteturn9file11
 
 ---
 
@@ -232,88 +362,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Create hold to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Create hold to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /create-holds?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.create-hold.list.view`, `payhub.create-hold.refresh`, `payhub.create-hold.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.create-hold.intent.create`, `payhub.create-hold.payment.authorize`, `payhub.create-hold.payment.capture`, `payhub.create-hold.refund.create`.
-- **Profile Bento (if applicable):** module=`create-hold`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /create-holds?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.create-hold.list.view`, `payhub.create-hold.refresh`, `payhub.create-hold.load_more`, `payhub.create-hold.intent.create`, `payhub.create-hold.intent.confirm`, `payhub.create-hold.refund.create`, `payhub.create-hold.payout.create`, `payhub.create-hold.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-CREATE-HOLD-01** Given an authenticated session in GMT+7, When `GET /create-holds?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.create-hold.list.view` is emitted.
-- **AC-CREATE-HOLD-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.create-hold.load_more` is emitted.
-- **AC-CREATE-HOLD-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-CREATE-HOLD-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-CREATE-HOLD-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-CREATE-HOLD-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-CREATE-HOLD-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-CREATE-HOLD-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-CREATE-HOLD-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-CREATE-HOLD-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-CREATE-HOLD-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.create-hold.intent.create` is emitted.
+- **AC-CREATE-HOLD-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-CREATE-HOLD-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-CREATE-HOLD-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-CREATE-HOLD-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-CREATE-HOLD-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-CREATE-HOLD-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-CREATE-HOLD-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-CREATE-HOLD-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-CREATE-HOLD-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-CREATE-HOLD-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-CREATE-HOLD-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-CREATE-HOLD-01, TC-CREATE-HOLD-02, TC-CREATE-HOLD-03, TC-CREATE-HOLD-04, TC-CREATE-HOLD-05, TC-CREATE-HOLD-06, TC-CREATE-HOLD-07, TC-CREATE-HOLD-08, TC-CREATE-HOLD-09, TC-CREATE-HOLD-10
+- **Test IDs:** TC-CREATE-HOLD-01, TC-CREATE-HOLD-02, TC-CREATE-HOLD-03, TC-CREATE-HOLD-04, TC-CREATE-HOLD-05, TC-CREATE-HOLD-06, TC-CREATE-HOLD-07, TC-CREATE-HOLD-08, TC-CREATE-HOLD-09, TC-CREATE-HOLD-10, TC-CREATE-HOLD-11, TC-CREATE-HOLD-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /create-holds` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /create-holds` body=`#CreateHoldCreate` schema.
-- **Detail:** `GET /create-holds/{id}` · **Update:** `PATCH /create-holds/{id}` body=`#CreateHoldUpdate` · **Delete:** `DELETE /create-holds/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /create-holds` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.create-hold.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.create-hold.intent.created|confirmed|canceled`, `payhub.create-hold.payment.settled|failed`, `payhub.create-hold.refund.created|succeeded|failed`, `payhub.create-hold.payout.created|processing|succeeded|failed`, `payhub.create-hold.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/create-holds`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -328,88 +521,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Settle / release to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Settle / release to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /settle-releases?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.settle-release.list.view`, `payhub.settle-release.refresh`, `payhub.settle-release.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.settle-release.intent.create`, `payhub.settle-release.payment.authorize`, `payhub.settle-release.payment.capture`, `payhub.settle-release.refund.create`.
-- **Profile Bento (if applicable):** module=`settle-release`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /settle-releases?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.settle-release.list.view`, `payhub.settle-release.refresh`, `payhub.settle-release.load_more`, `payhub.settle-release.intent.create`, `payhub.settle-release.intent.confirm`, `payhub.settle-release.refund.create`, `payhub.settle-release.payout.create`, `payhub.settle-release.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-SETTLE-RELEASE-01** Given an authenticated session in GMT+7, When `GET /settle-releases?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.settle-release.list.view` is emitted.
-- **AC-SETTLE-RELEASE-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.settle-release.load_more` is emitted.
-- **AC-SETTLE-RELEASE-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-SETTLE-RELEASE-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-SETTLE-RELEASE-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-SETTLE-RELEASE-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-SETTLE-RELEASE-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-SETTLE-RELEASE-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-SETTLE-RELEASE-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-SETTLE-RELEASE-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-SETTLE-RELEASE-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.settle-release.intent.create` is emitted.
+- **AC-SETTLE-RELEASE-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-SETTLE-RELEASE-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-SETTLE-RELEASE-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-SETTLE-RELEASE-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-SETTLE-RELEASE-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-SETTLE-RELEASE-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-SETTLE-RELEASE-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-SETTLE-RELEASE-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-SETTLE-RELEASE-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-SETTLE-RELEASE-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-SETTLE-RELEASE-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-SETTLE-RELEASE-01, TC-SETTLE-RELEASE-02, TC-SETTLE-RELEASE-03, TC-SETTLE-RELEASE-04, TC-SETTLE-RELEASE-05, TC-SETTLE-RELEASE-06, TC-SETTLE-RELEASE-07, TC-SETTLE-RELEASE-08, TC-SETTLE-RELEASE-09, TC-SETTLE-RELEASE-10
+- **Test IDs:** TC-SETTLE-RELEASE-01, TC-SETTLE-RELEASE-02, TC-SETTLE-RELEASE-03, TC-SETTLE-RELEASE-04, TC-SETTLE-RELEASE-05, TC-SETTLE-RELEASE-06, TC-SETTLE-RELEASE-07, TC-SETTLE-RELEASE-08, TC-SETTLE-RELEASE-09, TC-SETTLE-RELEASE-10, TC-SETTLE-RELEASE-11, TC-SETTLE-RELEASE-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /settle-releases` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /settle-releases` body=`#SettleReleaseCreate` schema.
-- **Detail:** `GET /settle-releases/{id}` · **Update:** `PATCH /settle-releases/{id}` body=`#SettleReleaseUpdate` · **Delete:** `DELETE /settle-releases/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /settle-releases` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.settle-release.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.settle-release.intent.created|confirmed|canceled`, `payhub.settle-release.payment.settled|failed`, `payhub.settle-release.refund.created|succeeded|failed`, `payhub.settle-release.payout.created|processing|succeeded|failed`, `payhub.settle-release.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/settle-releases`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -433,88 +689,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Create deposit intent to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Create deposit intent to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /create-deposit-intents?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.create-deposit-intent.list.view`, `payhub.create-deposit-intent.refresh`, `payhub.create-deposit-intent.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.create-deposit-intent.intent.create`, `payhub.create-deposit-intent.payment.authorize`, `payhub.create-deposit-intent.payment.capture`, `payhub.create-deposit-intent.refund.create`.
-- **Profile Bento (if applicable):** module=`create-deposit-intent`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /create-deposit-intents?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.create-deposit-intent.list.view`, `payhub.create-deposit-intent.refresh`, `payhub.create-deposit-intent.load_more`, `payhub.create-deposit-intent.intent.create`, `payhub.create-deposit-intent.intent.confirm`, `payhub.create-deposit-intent.refund.create`, `payhub.create-deposit-intent.payout.create`, `payhub.create-deposit-intent.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-CREATE-DEPOSIT-INTENT-01** Given an authenticated session in GMT+7, When `GET /create-deposit-intents?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.create-deposit-intent.list.view` is emitted.
-- **AC-CREATE-DEPOSIT-INTENT-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.create-deposit-intent.load_more` is emitted.
-- **AC-CREATE-DEPOSIT-INTENT-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-CREATE-DEPOSIT-INTENT-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-CREATE-DEPOSIT-INTENT-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-CREATE-DEPOSIT-INTENT-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-CREATE-DEPOSIT-INTENT-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-CREATE-DEPOSIT-INTENT-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-CREATE-DEPOSIT-INTENT-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-CREATE-DEPOSIT-INTENT-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-CREATE-DEPOSIT-INTENT-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.create-deposit-intent.intent.create` is emitted.
+- **AC-CREATE-DEPOSIT-INTENT-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-CREATE-DEPOSIT-INTENT-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-CREATE-DEPOSIT-INTENT-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-CREATE-DEPOSIT-INTENT-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-CREATE-DEPOSIT-INTENT-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-CREATE-DEPOSIT-INTENT-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-CREATE-DEPOSIT-INTENT-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-CREATE-DEPOSIT-INTENT-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-CREATE-DEPOSIT-INTENT-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-CREATE-DEPOSIT-INTENT-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-CREATE-DEPOSIT-INTENT-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-CREATE-DEPOSIT-INTENT-01, TC-CREATE-DEPOSIT-INTENT-02, TC-CREATE-DEPOSIT-INTENT-03, TC-CREATE-DEPOSIT-INTENT-04, TC-CREATE-DEPOSIT-INTENT-05, TC-CREATE-DEPOSIT-INTENT-06, TC-CREATE-DEPOSIT-INTENT-07, TC-CREATE-DEPOSIT-INTENT-08, TC-CREATE-DEPOSIT-INTENT-09, TC-CREATE-DEPOSIT-INTENT-10
+- **Test IDs:** TC-CREATE-DEPOSIT-INTENT-01, TC-CREATE-DEPOSIT-INTENT-02, TC-CREATE-DEPOSIT-INTENT-03, TC-CREATE-DEPOSIT-INTENT-04, TC-CREATE-DEPOSIT-INTENT-05, TC-CREATE-DEPOSIT-INTENT-06, TC-CREATE-DEPOSIT-INTENT-07, TC-CREATE-DEPOSIT-INTENT-08, TC-CREATE-DEPOSIT-INTENT-09, TC-CREATE-DEPOSIT-INTENT-10, TC-CREATE-DEPOSIT-INTENT-11, TC-CREATE-DEPOSIT-INTENT-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /create-deposit-intents` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /create-deposit-intents` body=`#CreateDepositIntentCreate` schema.
-- **Detail:** `GET /create-deposit-intents/{id}` · **Update:** `PATCH /create-deposit-intents/{id}` body=`#CreateDepositIntentUpdate` · **Delete:** `DELETE /create-deposit-intents/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /create-deposit-intents` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.create-deposit-intent.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.create-deposit-intent.intent.created|confirmed|canceled`, `payhub.create-deposit-intent.payment.settled|failed`, `payhub.create-deposit-intent.refund.created|succeeded|failed`, `payhub.create-deposit-intent.payout.created|processing|succeeded|failed`, `payhub.create-deposit-intent.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/create-deposit-intents`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -526,7 +845,7 @@ Repo: tg-miniapp-payhub-service
 3. Too small (< min) stays **uncredited**; can be auto‑aggregated per policy.  
 **Non‑Happy**: reorg before finality → rollback credit; mixer/blocked source → **hold & review** with case id.  
 **Security**: generate addresses via xpub/HSM; never reuse memos incorrectly.  
-**Observability**: time‑to‑credit, reorg count. 
+**Observability**: time‑to‑credit, reorg count.  fileciteturn9file11
 
 **UI & Interaction Model (Deposits)**  
 - List shows **latest 20 deposit intents**; **infinite scroll**; **pull‑to‑refresh**; search by **txId/network/tags**.  
@@ -543,88 +862,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Create withdrawal request (KYC‑gated) to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Create withdrawal request (KYC‑gated) to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /create-withdrawal-request-kycgateds?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.create-withdrawal-request-kycgated.list.view`, `payhub.create-withdrawal-request-kycgated.refresh`, `payhub.create-withdrawal-request-kycgated.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.create-withdrawal-request-kycgated.intent.create`, `payhub.create-withdrawal-request-kycgated.payment.authorize`, `payhub.create-withdrawal-request-kycgated.payment.capture`, `payhub.create-withdrawal-request-kycgated.refund.create`.
-- **Profile Bento (if applicable):** module=`create-withdrawal-request-kycgated`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /create-withdrawal-request-kycgateds?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.create-withdrawal-request-kycgated.list.view`, `payhub.create-withdrawal-request-kycgated.refresh`, `payhub.create-withdrawal-request-kycgated.load_more`, `payhub.create-withdrawal-request-kycgated.intent.create`, `payhub.create-withdrawal-request-kycgated.intent.confirm`, `payhub.create-withdrawal-request-kycgated.refund.create`, `payhub.create-withdrawal-request-kycgated.payout.create`, `payhub.create-withdrawal-request-kycgated.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-01** Given an authenticated session in GMT+7, When `GET /create-withdrawal-request-kycgateds?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.create-withdrawal-request-kycgated.list.view` is emitted.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.create-withdrawal-request-kycgated.load_more` is emitted.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.create-withdrawal-request-kycgated.intent.create` is emitted.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-01, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-02, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-03, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-04, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-05, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-06, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-07, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-08, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-09, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-10
+- **Test IDs:** TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-01, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-02, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-03, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-04, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-05, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-06, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-07, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-08, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-09, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-10, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-11, TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /create-withdrawal-request-kycgateds` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /create-withdrawal-request-kycgateds` body=`#CreateWithdrawalRequestKycgatedCreate` schema.
-- **Detail:** `GET /create-withdrawal-request-kycgateds/{id}` · **Update:** `PATCH /create-withdrawal-request-kycgateds/{id}` body=`#CreateWithdrawalRequestKycgatedUpdate` · **Delete:** `DELETE /create-withdrawal-request-kycgateds/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /create-withdrawal-request-kycgateds` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.create-withdrawal-request-kycgated.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.create-withdrawal-request-kycgated.intent.created|confirmed|canceled`, `payhub.create-withdrawal-request-kycgated.payment.settled|failed`, `payhub.create-withdrawal-request-kycgated.refund.created|succeeded|failed`, `payhub.create-withdrawal-request-kycgated.payout.created|processing|succeeded|failed`, `payhub.create-withdrawal-request-kycgated.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/create-withdrawal-request-kycgateds`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -635,7 +1017,7 @@ Repo: tg-miniapp-payhub-service
 2. Broadcaster builds/sends tx; supports **RBF**; status: `queued→broadcast→confirming→settled|failed`.  
 3. Cancel before broadcast: `DELETE /v1/withdrawals/{id}` idempotent.  
 **Non‑Happy**: fee spike → **delayed** status; address risk hit → **held** and case opened.  
-**Observability**: p95 time‑to‑broadcast; failure code mix. 
+**Observability**: p95 time‑to‑broadcast; failure code mix.  fileciteturn9file10
 
 **UI & Interaction Model (Withdrawals)**  
 - **Latest 20** withdrawal requests; **infinite scroll**; **pull‑to‑refresh**; search by **txId/address/tags**.  
@@ -652,88 +1034,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Quote to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Quote to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /quotes?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.quote.list.view`, `payhub.quote.refresh`, `payhub.quote.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.quote.intent.create`, `payhub.quote.payment.authorize`, `payhub.quote.payment.capture`, `payhub.quote.refund.create`.
-- **Profile Bento (if applicable):** module=`quote`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /quotes?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.quote.list.view`, `payhub.quote.refresh`, `payhub.quote.load_more`, `payhub.quote.intent.create`, `payhub.quote.intent.confirm`, `payhub.quote.refund.create`, `payhub.quote.payout.create`, `payhub.quote.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-QUOTE-01** Given an authenticated session in GMT+7, When `GET /quotes?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.quote.list.view` is emitted.
-- **AC-QUOTE-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.quote.load_more` is emitted.
-- **AC-QUOTE-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-QUOTE-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-QUOTE-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-QUOTE-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-QUOTE-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-QUOTE-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-QUOTE-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-QUOTE-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-QUOTE-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.quote.intent.create` is emitted.
+- **AC-QUOTE-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-QUOTE-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-QUOTE-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-QUOTE-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-QUOTE-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-QUOTE-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-QUOTE-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-QUOTE-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-QUOTE-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-QUOTE-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-QUOTE-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-QUOTE-01, TC-QUOTE-02, TC-QUOTE-03, TC-QUOTE-04, TC-QUOTE-05, TC-QUOTE-06, TC-QUOTE-07, TC-QUOTE-08, TC-QUOTE-09, TC-QUOTE-10
+- **Test IDs:** TC-QUOTE-01, TC-QUOTE-02, TC-QUOTE-03, TC-QUOTE-04, TC-QUOTE-05, TC-QUOTE-06, TC-QUOTE-07, TC-QUOTE-08, TC-QUOTE-09, TC-QUOTE-10, TC-QUOTE-11, TC-QUOTE-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /quotes` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /quotes` body=`#QuoteCreate` schema.
-- **Detail:** `GET /quotes/{id}` · **Update:** `PATCH /quotes/{id}` body=`#QuoteUpdate` · **Delete:** `DELETE /quotes/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /quotes` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.quote.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.quote.intent.created|confirmed|canceled`, `payhub.quote.payment.settled|failed`, `payhub.quote.refund.created|succeeded|failed`, `payhub.quote.payout.created|processing|succeeded|failed`, `payhub.quote.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/quotes`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -748,94 +1193,157 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Execute to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Execute to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /executes?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.execute.list.view`, `payhub.execute.refresh`, `payhub.execute.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.execute.intent.create`, `payhub.execute.payment.authorize`, `payhub.execute.payment.capture`, `payhub.execute.refund.create`.
-- **Profile Bento (if applicable):** module=`execute`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /executes?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.execute.list.view`, `payhub.execute.refresh`, `payhub.execute.load_more`, `payhub.execute.intent.create`, `payhub.execute.intent.confirm`, `payhub.execute.refund.create`, `payhub.execute.payout.create`, `payhub.execute.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-EXECUTE-01** Given an authenticated session in GMT+7, When `GET /executes?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.execute.list.view` is emitted.
-- **AC-EXECUTE-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.execute.load_more` is emitted.
-- **AC-EXECUTE-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-EXECUTE-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-EXECUTE-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-EXECUTE-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-EXECUTE-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-EXECUTE-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-EXECUTE-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-EXECUTE-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-EXECUTE-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.execute.intent.create` is emitted.
+- **AC-EXECUTE-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-EXECUTE-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-EXECUTE-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-EXECUTE-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-EXECUTE-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-EXECUTE-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-EXECUTE-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-EXECUTE-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-EXECUTE-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-EXECUTE-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-EXECUTE-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-EXECUTE-01, TC-EXECUTE-02, TC-EXECUTE-03, TC-EXECUTE-04, TC-EXECUTE-05, TC-EXECUTE-06, TC-EXECUTE-07, TC-EXECUTE-08, TC-EXECUTE-09, TC-EXECUTE-10
+- **Test IDs:** TC-EXECUTE-01, TC-EXECUTE-02, TC-EXECUTE-03, TC-EXECUTE-04, TC-EXECUTE-05, TC-EXECUTE-06, TC-EXECUTE-07, TC-EXECUTE-08, TC-EXECUTE-09, TC-EXECUTE-10, TC-EXECUTE-11, TC-EXECUTE-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /executes` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /executes` body=`#ExecuteCreate` schema.
-- **Detail:** `GET /executes/{id}` · **Update:** `PATCH /executes/{id}` body=`#ExecuteUpdate` · **Delete:** `DELETE /executes/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /executes` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.execute.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.execute.intent.created|confirmed|canceled`, `payhub.execute.payment.settled|failed`, `payhub.execute.refund.created|succeeded|failed`, `payhub.execute.payout.created|processing|succeeded|failed`, `payhub.execute.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/executes`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B5.2.1** — *As an End User, I execute a valid quote,* so that *balances update atomically.*  
-**AC**: `POST /v1/conversions/execute {quoteId}` performs journal move; idempotent by `quoteId`; receipt emitted.  
+**AC**: `POST /v1/conversions/execute {quoteId}` performs journal move; idempotent by `quoteId`; receipt emitted.  fileciteturn9file10
 
 **UI & Interaction Model (Conversions)**  
 - **Latest 20** conversion orders; **infinite scroll**; **pull‑to‑refresh**; search by **pair/quoteId/tags**.  
@@ -852,88 +1360,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Issue & pay invoices to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Issue & pay invoices to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /issue-pay-invoices?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.issue-pay-invoices.list.view`, `payhub.issue-pay-invoices.refresh`, `payhub.issue-pay-invoices.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.issue-pay-invoices.intent.create`, `payhub.issue-pay-invoices.payment.authorize`, `payhub.issue-pay-invoices.payment.capture`, `payhub.issue-pay-invoices.refund.create`.
-- **Profile Bento (if applicable):** module=`issue-pay-invoices`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /issue-pay-invoices?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.issue-pay-invoices.list.view`, `payhub.issue-pay-invoices.refresh`, `payhub.issue-pay-invoices.load_more`, `payhub.issue-pay-invoices.intent.create`, `payhub.issue-pay-invoices.intent.confirm`, `payhub.issue-pay-invoices.refund.create`, `payhub.issue-pay-invoices.payout.create`, `payhub.issue-pay-invoices.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-ISSUE-PAY-INVOICES-01** Given an authenticated session in GMT+7, When `GET /issue-pay-invoices?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.issue-pay-invoices.list.view` is emitted.
-- **AC-ISSUE-PAY-INVOICES-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.issue-pay-invoices.load_more` is emitted.
-- **AC-ISSUE-PAY-INVOICES-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-ISSUE-PAY-INVOICES-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-ISSUE-PAY-INVOICES-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-ISSUE-PAY-INVOICES-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-ISSUE-PAY-INVOICES-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-ISSUE-PAY-INVOICES-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-ISSUE-PAY-INVOICES-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-ISSUE-PAY-INVOICES-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-ISSUE-PAY-INVOICES-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.issue-pay-invoices.intent.create` is emitted.
+- **AC-ISSUE-PAY-INVOICES-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-ISSUE-PAY-INVOICES-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-ISSUE-PAY-INVOICES-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-ISSUE-PAY-INVOICES-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-ISSUE-PAY-INVOICES-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-ISSUE-PAY-INVOICES-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-ISSUE-PAY-INVOICES-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-ISSUE-PAY-INVOICES-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-ISSUE-PAY-INVOICES-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-ISSUE-PAY-INVOICES-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-ISSUE-PAY-INVOICES-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-ISSUE-PAY-INVOICES-01, TC-ISSUE-PAY-INVOICES-02, TC-ISSUE-PAY-INVOICES-03, TC-ISSUE-PAY-INVOICES-04, TC-ISSUE-PAY-INVOICES-05, TC-ISSUE-PAY-INVOICES-06, TC-ISSUE-PAY-INVOICES-07, TC-ISSUE-PAY-INVOICES-08, TC-ISSUE-PAY-INVOICES-09, TC-ISSUE-PAY-INVOICES-10
+- **Test IDs:** TC-ISSUE-PAY-INVOICES-01, TC-ISSUE-PAY-INVOICES-02, TC-ISSUE-PAY-INVOICES-03, TC-ISSUE-PAY-INVOICES-04, TC-ISSUE-PAY-INVOICES-05, TC-ISSUE-PAY-INVOICES-06, TC-ISSUE-PAY-INVOICES-07, TC-ISSUE-PAY-INVOICES-08, TC-ISSUE-PAY-INVOICES-09, TC-ISSUE-PAY-INVOICES-10, TC-ISSUE-PAY-INVOICES-11, TC-ISSUE-PAY-INVOICES-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /issue-pay-invoices` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /issue-pay-invoices` body=`#IssuePayInvoicesCreate` schema.
-- **Detail:** `GET /issue-pay-invoices/{id}` · **Update:** `PATCH /issue-pay-invoices/{id}` body=`#IssuePayInvoicesUpdate` · **Delete:** `DELETE /issue-pay-invoices/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /issue-pay-invoices` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.issue-pay-invoices.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.issue-pay-invoices.intent.created|confirmed|canceled`, `payhub.issue-pay-invoices.payment.settled|failed`, `payhub.issue-pay-invoices.refund.created|succeeded|failed`, `payhub.issue-pay-invoices.payout.created|processing|succeeded|failed`, `payhub.issue-pay-invoices.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/issue-pay-invoices`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -945,101 +1516,164 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Manual refunds to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Manual refunds to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /manual-refunds?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.manual-refunds.list.view`, `payhub.manual-refunds.refresh`, `payhub.manual-refunds.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.manual-refunds.intent.create`, `payhub.manual-refunds.payment.authorize`, `payhub.manual-refunds.payment.capture`, `payhub.manual-refunds.refund.create`.
-- **Profile Bento (if applicable):** module=`manual-refunds`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /manual-refunds?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.manual-refunds.list.view`, `payhub.manual-refunds.refresh`, `payhub.manual-refunds.load_more`, `payhub.manual-refunds.intent.create`, `payhub.manual-refunds.intent.confirm`, `payhub.manual-refunds.refund.create`, `payhub.manual-refunds.payout.create`, `payhub.manual-refunds.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-MANUAL-REFUNDS-01** Given an authenticated session in GMT+7, When `GET /manual-refunds?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.manual-refunds.list.view` is emitted.
-- **AC-MANUAL-REFUNDS-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.manual-refunds.load_more` is emitted.
-- **AC-MANUAL-REFUNDS-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-MANUAL-REFUNDS-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-MANUAL-REFUNDS-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-MANUAL-REFUNDS-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-MANUAL-REFUNDS-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-MANUAL-REFUNDS-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-MANUAL-REFUNDS-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-MANUAL-REFUNDS-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-MANUAL-REFUNDS-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.manual-refunds.intent.create` is emitted.
+- **AC-MANUAL-REFUNDS-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-MANUAL-REFUNDS-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-MANUAL-REFUNDS-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-MANUAL-REFUNDS-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-MANUAL-REFUNDS-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-MANUAL-REFUNDS-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-MANUAL-REFUNDS-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-MANUAL-REFUNDS-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-MANUAL-REFUNDS-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-MANUAL-REFUNDS-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-MANUAL-REFUNDS-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-MANUAL-REFUNDS-01, TC-MANUAL-REFUNDS-02, TC-MANUAL-REFUNDS-03, TC-MANUAL-REFUNDS-04, TC-MANUAL-REFUNDS-05, TC-MANUAL-REFUNDS-06, TC-MANUAL-REFUNDS-07, TC-MANUAL-REFUNDS-08, TC-MANUAL-REFUNDS-09, TC-MANUAL-REFUNDS-10
+- **Test IDs:** TC-MANUAL-REFUNDS-01, TC-MANUAL-REFUNDS-02, TC-MANUAL-REFUNDS-03, TC-MANUAL-REFUNDS-04, TC-MANUAL-REFUNDS-05, TC-MANUAL-REFUNDS-06, TC-MANUAL-REFUNDS-07, TC-MANUAL-REFUNDS-08, TC-MANUAL-REFUNDS-09, TC-MANUAL-REFUNDS-10, TC-MANUAL-REFUNDS-11, TC-MANUAL-REFUNDS-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /manual-refunds` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /manual-refunds` body=`#ManualRefundsCreate` schema.
-- **Detail:** `GET /manual-refunds/{id}` · **Update:** `PATCH /manual-refunds/{id}` body=`#ManualRefundsUpdate` · **Delete:** `DELETE /manual-refunds/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /manual-refunds` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.manual-refunds.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.manual-refunds.intent.created|confirmed|canceled`, `payhub.manual-refunds.payment.settled|failed`, `payhub.manual-refunds.refund.created|succeeded|failed`, `payhub.manual-refunds.payout.created|processing|succeeded|failed`, `payhub.manual-refunds.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/manual-refunds`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B6.2.1** — *As Finance Ops, I issue a manual refund,* so that *I can resolve exceptions.*  
-**AC**: `POST /v1/admin/refunds {invoiceId|journalTxId, reason}`; idempotent; receipt emitted. 
+**AC**: `POST /v1/admin/refunds {invoiceId|journalTxId, reason}`; idempotent; receipt emitted.  fileciteturn9file10
 
 **UI & Interaction Model (Invoices & Receipts)**  
 - **Latest 20** invoices/receipts; **infinite scroll**; **pull‑to‑refresh**; search by **invoiceId/purpose/tags**.  
 - **Sort**: Date, Popular, Featured, View.  
 - **Filter**: currency, amount range, status (issued/paying/paid/expired/refunded).  
 - **Actions**: Bookmark / Comment / Report / Share.  
-- **EXP**: on‑time payment/comment/share increment EXP (cooldowns).  
+- **EXP**: on‑time payment/comment/share increment EXP (cooldowns).  fileciteturn9file4
 
 ---
 
@@ -1049,88 +1683,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Limits & velocity profiles to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Limits & velocity profiles to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /limits-velocity-profiles?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.limits-velocity-profiles.list.view`, `payhub.limits-velocity-profiles.refresh`, `payhub.limits-velocity-profiles.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.limits-velocity-profiles.intent.create`, `payhub.limits-velocity-profiles.payment.authorize`, `payhub.limits-velocity-profiles.payment.capture`, `payhub.limits-velocity-profiles.refund.create`.
-- **Profile Bento (if applicable):** module=`limits-velocity-profiles`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /limits-velocity-profiles?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.limits-velocity-profiles.list.view`, `payhub.limits-velocity-profiles.refresh`, `payhub.limits-velocity-profiles.load_more`, `payhub.limits-velocity-profiles.intent.create`, `payhub.limits-velocity-profiles.intent.confirm`, `payhub.limits-velocity-profiles.refund.create`, `payhub.limits-velocity-profiles.payout.create`, `payhub.limits-velocity-profiles.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-LIMITS-VELOCITY-PROFILES-01** Given an authenticated session in GMT+7, When `GET /limits-velocity-profiles?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.limits-velocity-profiles.list.view` is emitted.
-- **AC-LIMITS-VELOCITY-PROFILES-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.limits-velocity-profiles.load_more` is emitted.
-- **AC-LIMITS-VELOCITY-PROFILES-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-LIMITS-VELOCITY-PROFILES-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-LIMITS-VELOCITY-PROFILES-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-LIMITS-VELOCITY-PROFILES-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-LIMITS-VELOCITY-PROFILES-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-LIMITS-VELOCITY-PROFILES-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-LIMITS-VELOCITY-PROFILES-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-LIMITS-VELOCITY-PROFILES-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-LIMITS-VELOCITY-PROFILES-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.limits-velocity-profiles.intent.create` is emitted.
+- **AC-LIMITS-VELOCITY-PROFILES-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-LIMITS-VELOCITY-PROFILES-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-LIMITS-VELOCITY-PROFILES-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-LIMITS-VELOCITY-PROFILES-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-LIMITS-VELOCITY-PROFILES-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-LIMITS-VELOCITY-PROFILES-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-LIMITS-VELOCITY-PROFILES-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-LIMITS-VELOCITY-PROFILES-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-LIMITS-VELOCITY-PROFILES-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-LIMITS-VELOCITY-PROFILES-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-LIMITS-VELOCITY-PROFILES-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-LIMITS-VELOCITY-PROFILES-01, TC-LIMITS-VELOCITY-PROFILES-02, TC-LIMITS-VELOCITY-PROFILES-03, TC-LIMITS-VELOCITY-PROFILES-04, TC-LIMITS-VELOCITY-PROFILES-05, TC-LIMITS-VELOCITY-PROFILES-06, TC-LIMITS-VELOCITY-PROFILES-07, TC-LIMITS-VELOCITY-PROFILES-08, TC-LIMITS-VELOCITY-PROFILES-09, TC-LIMITS-VELOCITY-PROFILES-10
+- **Test IDs:** TC-LIMITS-VELOCITY-PROFILES-01, TC-LIMITS-VELOCITY-PROFILES-02, TC-LIMITS-VELOCITY-PROFILES-03, TC-LIMITS-VELOCITY-PROFILES-04, TC-LIMITS-VELOCITY-PROFILES-05, TC-LIMITS-VELOCITY-PROFILES-06, TC-LIMITS-VELOCITY-PROFILES-07, TC-LIMITS-VELOCITY-PROFILES-08, TC-LIMITS-VELOCITY-PROFILES-09, TC-LIMITS-VELOCITY-PROFILES-10, TC-LIMITS-VELOCITY-PROFILES-11, TC-LIMITS-VELOCITY-PROFILES-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /limits-velocity-profiles` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /limits-velocity-profiles` body=`#LimitsVelocityProfilesCreate` schema.
-- **Detail:** `GET /limits-velocity-profiles/{id}` · **Update:** `PATCH /limits-velocity-profiles/{id}` body=`#LimitsVelocityProfilesUpdate` · **Delete:** `DELETE /limits-velocity-profiles/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /limits-velocity-profiles` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.limits-velocity-profiles.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.limits-velocity-profiles.intent.created|confirmed|canceled`, `payhub.limits-velocity-profiles.payment.settled|failed`, `payhub.limits-velocity-profiles.refund.created|succeeded|failed`, `payhub.limits-velocity-profiles.payout.created|processing|succeeded|failed`, `payhub.limits-velocity-profiles.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/limits-velocity-profiles`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -1142,88 +1839,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement AML screening & case management to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide AML screening & case management to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /aml-screening-case-managements?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.aml-screening-case-management.list.view`, `payhub.aml-screening-case-management.refresh`, `payhub.aml-screening-case-management.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.aml-screening-case-management.intent.create`, `payhub.aml-screening-case-management.payment.authorize`, `payhub.aml-screening-case-management.payment.capture`, `payhub.aml-screening-case-management.refund.create`.
-- **Profile Bento (if applicable):** module=`aml-screening-case-management`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /aml-screening-case-managements?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.aml-screening-case-management.list.view`, `payhub.aml-screening-case-management.refresh`, `payhub.aml-screening-case-management.load_more`, `payhub.aml-screening-case-management.intent.create`, `payhub.aml-screening-case-management.intent.confirm`, `payhub.aml-screening-case-management.refund.create`, `payhub.aml-screening-case-management.payout.create`, `payhub.aml-screening-case-management.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-AML-SCREENING-CASE-MANAGEMENT-01** Given an authenticated session in GMT+7, When `GET /aml-screening-case-managements?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.aml-screening-case-management.list.view` is emitted.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.aml-screening-case-management.load_more` is emitted.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-AML-SCREENING-CASE-MANAGEMENT-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.aml-screening-case-management.intent.create` is emitted.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-AML-SCREENING-CASE-MANAGEMENT-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-AML-SCREENING-CASE-MANAGEMENT-01, TC-AML-SCREENING-CASE-MANAGEMENT-02, TC-AML-SCREENING-CASE-MANAGEMENT-03, TC-AML-SCREENING-CASE-MANAGEMENT-04, TC-AML-SCREENING-CASE-MANAGEMENT-05, TC-AML-SCREENING-CASE-MANAGEMENT-06, TC-AML-SCREENING-CASE-MANAGEMENT-07, TC-AML-SCREENING-CASE-MANAGEMENT-08, TC-AML-SCREENING-CASE-MANAGEMENT-09, TC-AML-SCREENING-CASE-MANAGEMENT-10
+- **Test IDs:** TC-AML-SCREENING-CASE-MANAGEMENT-01, TC-AML-SCREENING-CASE-MANAGEMENT-02, TC-AML-SCREENING-CASE-MANAGEMENT-03, TC-AML-SCREENING-CASE-MANAGEMENT-04, TC-AML-SCREENING-CASE-MANAGEMENT-05, TC-AML-SCREENING-CASE-MANAGEMENT-06, TC-AML-SCREENING-CASE-MANAGEMENT-07, TC-AML-SCREENING-CASE-MANAGEMENT-08, TC-AML-SCREENING-CASE-MANAGEMENT-09, TC-AML-SCREENING-CASE-MANAGEMENT-10, TC-AML-SCREENING-CASE-MANAGEMENT-11, TC-AML-SCREENING-CASE-MANAGEMENT-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /aml-screening-case-managements` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /aml-screening-case-managements` body=`#AmlScreeningCaseManagementCreate` schema.
-- **Detail:** `GET /aml-screening-case-managements/{id}` · **Update:** `PATCH /aml-screening-case-managements/{id}` body=`#AmlScreeningCaseManagementUpdate` · **Delete:** `DELETE /aml-screening-case-managements/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /aml-screening-case-managements` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.aml-screening-case-management.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.aml-screening-case-management.intent.created|confirmed|canceled`, `payhub.aml-screening-case-management.payment.settled|failed`, `payhub.aml-screening-case-management.refund.created|succeeded|failed`, `payhub.aml-screening-case-management.payout.created|processing|succeeded|failed`, `payhub.aml-screening-case-management.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/aml-screening-case-managements`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -1235,94 +1995,157 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Exports for audit to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Exports for audit to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /exports-for-audits?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.exports-for-audit.list.view`, `payhub.exports-for-audit.refresh`, `payhub.exports-for-audit.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.exports-for-audit.intent.create`, `payhub.exports-for-audit.payment.authorize`, `payhub.exports-for-audit.payment.capture`, `payhub.exports-for-audit.refund.create`.
-- **Profile Bento (if applicable):** module=`exports-for-audit`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /exports-for-audits?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.exports-for-audit.list.view`, `payhub.exports-for-audit.refresh`, `payhub.exports-for-audit.load_more`, `payhub.exports-for-audit.intent.create`, `payhub.exports-for-audit.intent.confirm`, `payhub.exports-for-audit.refund.create`, `payhub.exports-for-audit.payout.create`, `payhub.exports-for-audit.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-EXPORTS-FOR-AUDIT-01** Given an authenticated session in GMT+7, When `GET /exports-for-audits?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.exports-for-audit.list.view` is emitted.
-- **AC-EXPORTS-FOR-AUDIT-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.exports-for-audit.load_more` is emitted.
-- **AC-EXPORTS-FOR-AUDIT-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-EXPORTS-FOR-AUDIT-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-EXPORTS-FOR-AUDIT-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-EXPORTS-FOR-AUDIT-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-EXPORTS-FOR-AUDIT-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-EXPORTS-FOR-AUDIT-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-EXPORTS-FOR-AUDIT-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-EXPORTS-FOR-AUDIT-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-EXPORTS-FOR-AUDIT-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.exports-for-audit.intent.create` is emitted.
+- **AC-EXPORTS-FOR-AUDIT-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-EXPORTS-FOR-AUDIT-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-EXPORTS-FOR-AUDIT-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-EXPORTS-FOR-AUDIT-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-EXPORTS-FOR-AUDIT-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-EXPORTS-FOR-AUDIT-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-EXPORTS-FOR-AUDIT-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-EXPORTS-FOR-AUDIT-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-EXPORTS-FOR-AUDIT-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-EXPORTS-FOR-AUDIT-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-EXPORTS-FOR-AUDIT-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-EXPORTS-FOR-AUDIT-01, TC-EXPORTS-FOR-AUDIT-02, TC-EXPORTS-FOR-AUDIT-03, TC-EXPORTS-FOR-AUDIT-04, TC-EXPORTS-FOR-AUDIT-05, TC-EXPORTS-FOR-AUDIT-06, TC-EXPORTS-FOR-AUDIT-07, TC-EXPORTS-FOR-AUDIT-08, TC-EXPORTS-FOR-AUDIT-09, TC-EXPORTS-FOR-AUDIT-10
+- **Test IDs:** TC-EXPORTS-FOR-AUDIT-01, TC-EXPORTS-FOR-AUDIT-02, TC-EXPORTS-FOR-AUDIT-03, TC-EXPORTS-FOR-AUDIT-04, TC-EXPORTS-FOR-AUDIT-05, TC-EXPORTS-FOR-AUDIT-06, TC-EXPORTS-FOR-AUDIT-07, TC-EXPORTS-FOR-AUDIT-08, TC-EXPORTS-FOR-AUDIT-09, TC-EXPORTS-FOR-AUDIT-10, TC-EXPORTS-FOR-AUDIT-11, TC-EXPORTS-FOR-AUDIT-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /exports-for-audits` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /exports-for-audits` body=`#ExportsForAuditCreate` schema.
-- **Detail:** `GET /exports-for-audits/{id}` · **Update:** `PATCH /exports-for-audits/{id}` body=`#ExportsForAuditUpdate` · **Delete:** `DELETE /exports-for-audits/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /exports-for-audits` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.exports-for-audit.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.exports-for-audit.intent.created|confirmed|canceled`, `payhub.exports-for-audit.payment.settled|failed`, `payhub.exports-for-audit.refund.created|succeeded|failed`, `payhub.exports-for-audit.payout.created|processing|succeeded|failed`, `payhub.exports-for-audit.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/exports-for-audits`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B7.3.1** — *As Auditor, I export immutable journals & reconciliation artifacts.*  
-**AC**: CSV/Parquet export; signed manifest; rate‑limited; redactions applied.  
+**AC**: CSV/Parquet export; signed manifest; rate‑limited; redactions applied.  fileciteturn9file10
 
 ---
 
@@ -1332,88 +2155,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Daily close to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Daily close to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /daily-closes?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.daily-close.list.view`, `payhub.daily-close.refresh`, `payhub.daily-close.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.daily-close.intent.create`, `payhub.daily-close.payment.authorize`, `payhub.daily-close.payment.capture`, `payhub.daily-close.refund.create`.
-- **Profile Bento (if applicable):** module=`daily-close`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /daily-closes?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.daily-close.list.view`, `payhub.daily-close.refresh`, `payhub.daily-close.load_more`, `payhub.daily-close.intent.create`, `payhub.daily-close.intent.confirm`, `payhub.daily-close.refund.create`, `payhub.daily-close.payout.create`, `payhub.daily-close.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-DAILY-CLOSE-01** Given an authenticated session in GMT+7, When `GET /daily-closes?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.daily-close.list.view` is emitted.
-- **AC-DAILY-CLOSE-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.daily-close.load_more` is emitted.
-- **AC-DAILY-CLOSE-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-DAILY-CLOSE-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-DAILY-CLOSE-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-DAILY-CLOSE-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-DAILY-CLOSE-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-DAILY-CLOSE-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-DAILY-CLOSE-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-DAILY-CLOSE-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-DAILY-CLOSE-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.daily-close.intent.create` is emitted.
+- **AC-DAILY-CLOSE-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-DAILY-CLOSE-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-DAILY-CLOSE-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-DAILY-CLOSE-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-DAILY-CLOSE-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-DAILY-CLOSE-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-DAILY-CLOSE-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-DAILY-CLOSE-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-DAILY-CLOSE-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-DAILY-CLOSE-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-DAILY-CLOSE-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-DAILY-CLOSE-01, TC-DAILY-CLOSE-02, TC-DAILY-CLOSE-03, TC-DAILY-CLOSE-04, TC-DAILY-CLOSE-05, TC-DAILY-CLOSE-06, TC-DAILY-CLOSE-07, TC-DAILY-CLOSE-08, TC-DAILY-CLOSE-09, TC-DAILY-CLOSE-10
+- **Test IDs:** TC-DAILY-CLOSE-01, TC-DAILY-CLOSE-02, TC-DAILY-CLOSE-03, TC-DAILY-CLOSE-04, TC-DAILY-CLOSE-05, TC-DAILY-CLOSE-06, TC-DAILY-CLOSE-07, TC-DAILY-CLOSE-08, TC-DAILY-CLOSE-09, TC-DAILY-CLOSE-10, TC-DAILY-CLOSE-11, TC-DAILY-CLOSE-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /daily-closes` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /daily-closes` body=`#DailyCloseCreate` schema.
-- **Detail:** `GET /daily-closes/{id}` · **Update:** `PATCH /daily-closes/{id}` body=`#DailyCloseUpdate` · **Delete:** `DELETE /daily-closes/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /daily-closes` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.daily-close.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.daily-close.intent.created|confirmed|canceled`, `payhub.daily-close.payment.settled|failed`, `payhub.daily-close.refund.created|succeeded|failed`, `payhub.daily-close.payout.created|processing|succeeded|failed`, `payhub.daily-close.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/daily-closes`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -1425,94 +2311,157 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Fee & rule reports to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Fee & rule reports to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /fee-rule-reports?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.fee-rule-reports.list.view`, `payhub.fee-rule-reports.refresh`, `payhub.fee-rule-reports.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.fee-rule-reports.intent.create`, `payhub.fee-rule-reports.payment.authorize`, `payhub.fee-rule-reports.payment.capture`, `payhub.fee-rule-reports.refund.create`.
-- **Profile Bento (if applicable):** module=`fee-rule-reports`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /fee-rule-reports?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.fee-rule-reports.list.view`, `payhub.fee-rule-reports.refresh`, `payhub.fee-rule-reports.load_more`, `payhub.fee-rule-reports.intent.create`, `payhub.fee-rule-reports.intent.confirm`, `payhub.fee-rule-reports.refund.create`, `payhub.fee-rule-reports.payout.create`, `payhub.fee-rule-reports.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-FEE-RULE-REPORTS-01** Given an authenticated session in GMT+7, When `GET /fee-rule-reports?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.fee-rule-reports.list.view` is emitted.
-- **AC-FEE-RULE-REPORTS-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.fee-rule-reports.load_more` is emitted.
-- **AC-FEE-RULE-REPORTS-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-FEE-RULE-REPORTS-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-FEE-RULE-REPORTS-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-FEE-RULE-REPORTS-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-FEE-RULE-REPORTS-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-FEE-RULE-REPORTS-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-FEE-RULE-REPORTS-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-FEE-RULE-REPORTS-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-FEE-RULE-REPORTS-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.fee-rule-reports.intent.create` is emitted.
+- **AC-FEE-RULE-REPORTS-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-FEE-RULE-REPORTS-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-FEE-RULE-REPORTS-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-FEE-RULE-REPORTS-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-FEE-RULE-REPORTS-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-FEE-RULE-REPORTS-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-FEE-RULE-REPORTS-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-FEE-RULE-REPORTS-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-FEE-RULE-REPORTS-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-FEE-RULE-REPORTS-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-FEE-RULE-REPORTS-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-FEE-RULE-REPORTS-01, TC-FEE-RULE-REPORTS-02, TC-FEE-RULE-REPORTS-03, TC-FEE-RULE-REPORTS-04, TC-FEE-RULE-REPORTS-05, TC-FEE-RULE-REPORTS-06, TC-FEE-RULE-REPORTS-07, TC-FEE-RULE-REPORTS-08, TC-FEE-RULE-REPORTS-09, TC-FEE-RULE-REPORTS-10
+- **Test IDs:** TC-FEE-RULE-REPORTS-01, TC-FEE-RULE-REPORTS-02, TC-FEE-RULE-REPORTS-03, TC-FEE-RULE-REPORTS-04, TC-FEE-RULE-REPORTS-05, TC-FEE-RULE-REPORTS-06, TC-FEE-RULE-REPORTS-07, TC-FEE-RULE-REPORTS-08, TC-FEE-RULE-REPORTS-09, TC-FEE-RULE-REPORTS-10, TC-FEE-RULE-REPORTS-11, TC-FEE-RULE-REPORTS-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /fee-rule-reports` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /fee-rule-reports` body=`#FeeRuleReportsCreate` schema.
-- **Detail:** `GET /fee-rule-reports/{id}` · **Update:** `PATCH /fee-rule-reports/{id}` body=`#FeeRuleReportsUpdate` · **Delete:** `DELETE /fee-rule-reports/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /fee-rule-reports` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.fee-rule-reports.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.fee-rule-reports.intent.created|confirmed|canceled`, `payhub.fee-rule-reports.payment.settled|failed`, `payhub.fee-rule-reports.refund.created|succeeded|failed`, `payhub.fee-rule-reports.payout.created|processing|succeeded|failed`, `payhub.fee-rule-reports.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/fee-rule-reports`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B8.2.1** — *As Finance Ops, I review fee take and rules applied.*  
-**AC**: fee schedule snapshot vs postings; anomalies reported. 
+**AC**: fee schedule snapshot vs postings; anomalies reported.  fileciteturn9file10
 
 ---
 
@@ -1522,88 +2471,151 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Idempotency & retries to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Idempotency & retries to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /idempotency-retries?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.idempotency-retries.list.view`, `payhub.idempotency-retries.refresh`, `payhub.idempotency-retries.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.idempotency-retries.intent.create`, `payhub.idempotency-retries.payment.authorize`, `payhub.idempotency-retries.payment.capture`, `payhub.idempotency-retries.refund.create`.
-- **Profile Bento (if applicable):** module=`idempotency-retries`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /idempotency-retries?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.idempotency-retries.list.view`, `payhub.idempotency-retries.refresh`, `payhub.idempotency-retries.load_more`, `payhub.idempotency-retries.intent.create`, `payhub.idempotency-retries.intent.confirm`, `payhub.idempotency-retries.refund.create`, `payhub.idempotency-retries.payout.create`, `payhub.idempotency-retries.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-IDEMPOTENCY-RETRIES-01** Given an authenticated session in GMT+7, When `GET /idempotency-retries?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.idempotency-retries.list.view` is emitted.
-- **AC-IDEMPOTENCY-RETRIES-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.idempotency-retries.load_more` is emitted.
-- **AC-IDEMPOTENCY-RETRIES-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-IDEMPOTENCY-RETRIES-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-IDEMPOTENCY-RETRIES-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-IDEMPOTENCY-RETRIES-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-IDEMPOTENCY-RETRIES-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-IDEMPOTENCY-RETRIES-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-IDEMPOTENCY-RETRIES-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-IDEMPOTENCY-RETRIES-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-IDEMPOTENCY-RETRIES-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.idempotency-retries.intent.create` is emitted.
+- **AC-IDEMPOTENCY-RETRIES-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-IDEMPOTENCY-RETRIES-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-IDEMPOTENCY-RETRIES-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-IDEMPOTENCY-RETRIES-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-IDEMPOTENCY-RETRIES-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-IDEMPOTENCY-RETRIES-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-IDEMPOTENCY-RETRIES-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-IDEMPOTENCY-RETRIES-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-IDEMPOTENCY-RETRIES-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-IDEMPOTENCY-RETRIES-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-IDEMPOTENCY-RETRIES-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-IDEMPOTENCY-RETRIES-01, TC-IDEMPOTENCY-RETRIES-02, TC-IDEMPOTENCY-RETRIES-03, TC-IDEMPOTENCY-RETRIES-04, TC-IDEMPOTENCY-RETRIES-05, TC-IDEMPOTENCY-RETRIES-06, TC-IDEMPOTENCY-RETRIES-07, TC-IDEMPOTENCY-RETRIES-08, TC-IDEMPOTENCY-RETRIES-09, TC-IDEMPOTENCY-RETRIES-10
+- **Test IDs:** TC-IDEMPOTENCY-RETRIES-01, TC-IDEMPOTENCY-RETRIES-02, TC-IDEMPOTENCY-RETRIES-03, TC-IDEMPOTENCY-RETRIES-04, TC-IDEMPOTENCY-RETRIES-05, TC-IDEMPOTENCY-RETRIES-06, TC-IDEMPOTENCY-RETRIES-07, TC-IDEMPOTENCY-RETRIES-08, TC-IDEMPOTENCY-RETRIES-09, TC-IDEMPOTENCY-RETRIES-10, TC-IDEMPOTENCY-RETRIES-11, TC-IDEMPOTENCY-RETRIES-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /idempotency-retries` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /idempotency-retries` body=`#IdempotencyRetriesCreate` schema.
-- **Detail:** `GET /idempotency-retries/{id}` · **Update:** `PATCH /idempotency-retries/{id}` body=`#IdempotencyRetriesUpdate` · **Delete:** `DELETE /idempotency-retries/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /idempotency-retries` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.idempotency-retries.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.idempotency-retries.intent.created|confirmed|canceled`, `payhub.idempotency-retries.payment.settled|failed`, `payhub.idempotency-retries.refund.created|succeeded|failed`, `payhub.idempotency-retries.payout.created|processing|succeeded|failed`, `payhub.idempotency-retries.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/idempotency-retries`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
@@ -1615,128 +2627,191 @@ Repo: tg-miniapp-payhub-service
 
 
 #### Objective & KPIs
-- **Business value:** Implement Telemetry & SLOs to increase checkout success, reduce refund/failure rates, and enable programmable payments in the ecosystem.
-- **Primary metrics:** payment_success_rate ≥ 98%, authorization_latency p95 ≤ 400ms, settlement_latency p95 ≤ 2s, **5xx error budget ≤ 0.1%/day**.
-- **Secondary metrics:** chargeback_rate ≤ 0.2%, duplicate_payment_rate via idempotency ≤ 0.05%, fraud_flag_rate ≤ 0.3%.
+- **Business value:** Provide Telemetry & SLOs to process in-app payments and payouts reliably across providers with clear receipts, refunds, and ledgers.
+- **Primary SLOs:** intent_create_success ≥ 99.9%, confirm_success ≥ 99.7%, payout_success ≥ 99.5%, **p95 read ≤ 200ms**, **p95 write ≤ 350ms**, **availability ≥ 99.95%**.
+- **Secondary metrics:** duplicate_submit_rate ≤ 0.05% (idempotency), reconciliation_mismatch_rate ≤ 0.01%, chargeback_rate ≤ industry baseline.
 
 #### Preconditions & Visibility
-- **Auth:** Telegram WebApp HMAC → session → **Bearer/JWT**.
-- **Roles / User Role Badges:** Payer, Merchant, FinanceOps, Admin.
-- **System Badges:** e.g., **KYC Verified**, **Merchant Verified** required for receiving funds.
-- **Token/EXP gates:** FZ stake/fee discounts; EXP gates for advanced payout features.
-- **Audience rules:** Private by default for payment intents; merchant dashboards can be role-gated.
+- **Auth:** Telegram WebApp **HMAC** → session → **Bearer/JWT** for API; inbound **webhooks** require signature header verification.
+- **Roles / User Role Badges:** Buyer, Seller (Creator), Finance, Admin, Auditor.
+- **System Badges:** **KYC Verified** required for payouts and high-value transactions; **Creator Program** for sellers (apply + pay FZ + admin review).
+- **Audience rules:** Order history is Private to the buyer and admins; shop pages/public offers are Public/Followers/Verified/Holders based on configuration.
 
 #### UI & Actions (Screen Contract)
-- **Patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
-- **Data source:** `GET /telemetry-slos?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]`  
-- **States:** Loading, Empty, Error, Partial; **top-refresh** and **infinite scroll** with `limit` batches.
-- **Permissions matrix:** Action gates by Role + Badges (e.g., only **Merchant Verified** can capture/refund).
-- **Telemetry:** `payhub.telemetry-slos.list.view`, `payhub.telemetry-slos.refresh`, `payhub.telemetry-slos.load_more`, `search.submit`, `sort.change`, `filter.apply`, `payhub.telemetry-slos.intent.create`, `payhub.telemetry-slos.payment.authorize`, `payhub.telemetry-slos.payment.capture`, `payhub.telemetry-slos.refund.create`.
-- **Profile Bento (if applicable):** module=`telemetry-slos`, sizes=`S/M/L`, ordering; deep-link with Telegram payload.
+- **Screen patterns:** List / Detail / Create-Edit / Delete / Search / Sort / Filter / Bookmark / Comment / Report / Share.
+- **Data source pattern:** `GET /telemetry-slos?limit={L}&cursor={C}&sort={S}&q={Q}&filter[...]` (canonical list params).
+- **States:** Loading (skeleton list), Empty (no orders/payouts), Error (retry/backoff), Partial (provider degraded).
+- **Permissions matrix:** Buyers can create payment intents and request refunds; Sellers can create invoices and request payouts; Finance/Admin can review, refund, and export ledgers.
+- **Telemetry:** `payhub.telemetry-slos.list.view`, `payhub.telemetry-slos.refresh`, `payhub.telemetry-slos.load_more`, `payhub.telemetry-slos.intent.create`, `payhub.telemetry-slos.intent.confirm`, `payhub.telemetry-slos.refund.create`, `payhub.telemetry-slos.payout.create`, `payhub.telemetry-slos.webhook.ingest`, `search.submit`, `sort.change`, `filter.apply`.
+- **Profile Bento:** module=`payhub-bento`, sizes=`S/M/L`, order: latest payments → refunds → payouts; deep-link opens invoice/payment sheet with Telegram `start_param`.
 
 #### Acceptance Criteria (Gherkin)
-- **AC-TELEMETRY-SLOS-01** Given an authenticated session in GMT+7, When `GET /telemetry-slos?limit=20`, Then ≤20 items return with `nextCursor` when more exist, and telemetry `payhub.telemetry-slos.list.view` is emitted.
-- **AC-TELEMETRY-SLOS-02** Given a `cursor`, When loading more, Then results continue after the cursor with no duplicates and `payhub.telemetry-slos.load_more` is emitted.
-- **AC-TELEMETRY-SLOS-03** Given filters and `q` are applied, When submitted, Then only matching items return and filter echo is present in response metadata.
-- **AC-TELEMETRY-SLOS-04** Given invalid params (e.g., `limit>200`), When the request is made, Then **422** returns with error `{code,message,details,traceId}`.
-- **AC-TELEMETRY-SLOS-05** Given an unauthenticated user, When hitting protected endpoints, Then **401** is returned.
-- **AC-TELEMETRY-SLOS-06** Given missing required badges/roles (e.g., Merchant Verified), When attempting capture/refund, Then **403** is returned and the UI shows gate messaging.
-- **AC-TELEMETRY-SLOS-07** Given a **POST** with `Idempotency-Key` is replayed within 24h, When the same body is sent, Then the original **200/201** is returned and no duplicate payment/capture occurs.
-- **AC-TELEMETRY-SLOS-08** Given a duplicate unique field (e.g., externalReference), When creating, Then **409** conflict is returned with guidance.
-- **AC-TELEMETRY-SLOS-09** Given rate limits (per user 120 rpm; per IP 600 rpm), When exceeded, Then **429** with `Retry-After` is returned and the UI shows backoff.
-- **AC-TELEMETRY-SLOS-10** Given a transient processor outage, When client retries with exponential backoff + jitter, Then success or terminal **5xx** is returned; logs include `X-Trace-Id`.
+- **AC-TELEMETRY-SLOS-01** Given an authenticated Buyer in GMT+7, When `POST /payments/intents` is called with **Idempotency-Key**, Then **201** returns `PaymentIntent` with status `requires_confirmation` and telemetry `payhub.telemetry-slos.intent.create` is emitted.
+- **AC-TELEMETRY-SLOS-02** Given the same body/key is replayed within 24h, When calling again, Then the **original 201** body is returned and no duplicate ledger entries are written.
+- **AC-TELEMETRY-SLOS-03** Given a valid intent, When `POST /payments/intents/{id}/confirm` is called, Then status transitions `processing` → `succeeded` within SLA; PSP async webhooks finalize if delayed.
+- **AC-TELEMETRY-SLOS-04** Given a canceled or succeeded intent, When confirm is called, Then **409** `INVALID_STATE` is returned and no side effects occur.
+- **AC-TELEMETRY-SLOS-05** Given invalid params (e.g., `amount <= 0`, `currency` not in allowlist, `limit>200`), When the request is made, Then **422** returns with `{code,message,details,traceId}`.
+- **AC-TELEMETRY-SLOS-06** Given unauthenticated access or missing KYC badge for payouts, When requested, Then **401/403** is returned with clear gating text.
+- **AC-TELEMETRY-SLOS-07** Given a nonexistent resource (intent/payment/refund/payout/invoice), When requested, Then **404** error model is returned.
+- **AC-TELEMETRY-SLOS-08** Given `POST /refunds` for a settled payment, When amount ≤ captured amount and within policy, Then **201** creates `Refund`; duplicate with same key returns the original; exceeding amount → **409** `AMOUNT_EXCEEDS_CAPTURED`.
+- **AC-TELEMETRY-SLOS-09** Given `POST /payouts` for a KYC-verified seller, When bank/wallet details pass validation, Then **201** creates `Payout` with status `pending`; provider failure → **202** `processing` with later webhook update.
+- **AC-TELEMETRY-SLOS-10** Given inbound webhook `POST /webhooks/ingest` with invalid signature, When received, Then **401** `INVALID_SIGNATURE`; valid but duplicate event id → **200** with `dedup:true` and no side effects.
+- **AC-TELEMETRY-SLOS-11** Given provider or API rate limits, When exceeded, Then **429** with `Retry-After` is returned and client backs off with jitter; idempotent replay ensures no duplicates.
+- **AC-TELEMETRY-SLOS-12** Given backend 5xx or network errors, When client retries with same **Idempotency-Key**, Then at-most-once semantics are preserved and eventual state is correct via reconciliation.
 
-- **Test IDs:** TC-TELEMETRY-SLOS-01, TC-TELEMETRY-SLOS-02, TC-TELEMETRY-SLOS-03, TC-TELEMETRY-SLOS-04, TC-TELEMETRY-SLOS-05, TC-TELEMETRY-SLOS-06, TC-TELEMETRY-SLOS-07, TC-TELEMETRY-SLOS-08, TC-TELEMETRY-SLOS-09, TC-TELEMETRY-SLOS-10
+- **Test IDs:** TC-TELEMETRY-SLOS-01, TC-TELEMETRY-SLOS-02, TC-TELEMETRY-SLOS-03, TC-TELEMETRY-SLOS-04, TC-TELEMETRY-SLOS-05, TC-TELEMETRY-SLOS-06, TC-TELEMETRY-SLOS-07, TC-TELEMETRY-SLOS-08, TC-TELEMETRY-SLOS-09, TC-TELEMETRY-SLOS-10, TC-TELEMETRY-SLOS-11, TC-TELEMETRY-SLOS-12
 
 #### API Requirements Extract (for OpenAPI.yaml)
-- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init.
-- **Headers:** `Idempotency-Key` (POST/PATCH), `X-Trace-Id`.
-- **Collection:** `GET /telemetry-slos` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping note if repo differs).
-- **Create:** `POST /telemetry-slos` body=`#TelemetrySlosCreate` schema.
-- **Detail:** `GET /telemetry-slos/{id}` · **Update:** `PATCH /telemetry-slos/{id}` body=`#TelemetrySlosUpdate` · **Delete:** `DELETE /telemetry-slos/{id}`.
-- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`.
-- **200 example:**
+- **Tag:** `payhub` · **Auth:** Bearer scopes (`payhub:read`, `payhub:write`) + Telegram HMAC for WebApp init; webhook ingest uses signature header verification.
+- **Headers:** `X-Trace-Id`; `Idempotency-Key` required on POST/PATCH/DELETE mutations; `Payhub-Signature` (HMAC-SHA256) for webhook verification.
+- **Collections:** `GET /telemetry-slos` params: `limit,cursor,since,sort,q,filter[*]` (Param Mapping: `filter[status]`, `filter[buyerId]`, `filter[sellerId]`, `filter[currency]`).
+- **Payment Intents:** `POST /payments/intents`, `GET /payments/intents/{id}`, `POST /payments/intents/{id}/confirm`, `POST /payments/intents/{id}/cancel`.
+- **Payments/Charges:** `GET /payments?filter[intentId]=...`, `GET /payments/{id}`.
+- **Invoices:** `POST /invoices`, `GET /invoices/{id}`, `GET /invoices?filter[sellerId]=...`.
+- **Refunds:** `POST /refunds`, `GET /refunds/{id}`.
+- **Payouts:** `POST /payouts`, `GET /payouts/{id}`, `GET /payouts?filter[sellerId]=...`.
+- **Ledger:** `GET /ledger/entries?since=...&limit=...&cursor=...` (double-entry view).
+- **Webhooks:** `POST /webhooks/ingest` (provider → PayHub) with `Payhub-Signature` header.
+- **Envelope:** `{data:[], nextCursor:string|null, total?:number}`
+- **201 example (intent create):**
   ```json
   {
-    "data": [{"id":"uuid-v7","title":"Example","status":"draft","createdAt":"2025-10-03T10:00:00+07:00"}],
-    "nextCursor":"eyJvZmZzZXQiOjIwfQ=="
+    "data": {"id":"pi_01HXYZ","amount":129900,"currency":"THB","status":"requires_confirmation","buyerId":"uuid-v7","sellerId":"uuid-v7","createdAt":"2025-10-03T15:30:00+07:00"}
   }
   ```
-- **422 example:**
+- **401 example (invalid webhook signature):**
   ```json
   {
-    "code":"VALIDATION_ERROR",
-    "message":"limit must be <= 200",
-    "details":{"limit":["too large"]},
+    "code":"UNAUTHORIZED",
+    "message":"INVALID_SIGNATURE",
+    "details":{"hint":"verify Payhub-Signature using shared secret"},
     "traceId":"trc-01HXYZ"
   }
   ```
 
 #### Data Contracts
-| field           | type     | format     | nullable | enum                             | default | validation                        | indexes |
-|-----------------|----------|------------|----------|----------------------------------|---------|-----------------------------------|---------|
-| id              | string   | uuid-v7    | false    | -                                | -       | required                          | PK      |
-| title           | string   | -          | false    | -                                | -       | 1..160 chars                      | idx     |
-| description     | string   | markdown   | true     | -                                | -       | ≤ 10,000 chars                    | -       |
-| status          | string   | -          | false    | draft,published,archived         | draft   | enum                              | idx     |
-| amount          | number   | decimal    | false    | -                                | -       | >0; precision 18, scale 8         | idx     |
-| currency        | string   | -          | false    | USDT,USDC,ETH,BTC,THB,BASE,ARB   | USDT    | enum                              | idx     |
-| createdAt       | string   | date-time  | false    | -                                | now     | ISO-8601 (GMT+7 examples)         | -       |
-| updatedAt       | string   | date-time  | false    | -                                | now     | ISO-8601                          | -       |
-| createdBy       | string   | uuid-v7    | false    | -                                | -       | references User.id                | idx     |
-| externalRef     | string   | -          | true     | -                                | -       | unique per merchant (if provided) | idx     |
+**PaymentIntent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| buyerId   | string  | uuid   | false    | -    | -       | required   | idx     |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1 (minor units) | idx |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | requires_confirmation,processing,succeeded,canceled | requires_confirmation | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 (GMT+7 examples) | - |
+
+**Payment**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| intentId  | string  | string | false    | -    | -       | references PaymentIntent.id | idx |
+| provider  | string  | -      | false    | -    | -       | allowlisted | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | -       |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | -       |
+| status    | string  | -      | false    | pending,settled,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Invoice**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | required   | idx     |
+| amount    | integer | int64  | false    | -    | -       | ≥ 1        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist  | idx     |
+| status    | string  | -      | false    | draft,open,paid,canceled | draft | enum | idx |
+| dueAt     | string  | date-time | true  | -    | -       | ISO-8601   | idx     |
+
+**Refund**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| paymentId | string  | string | false    | -    | -       | references Payment.id | idx |
+| amount    | integer | int64  | false    | -    | -       | 1..payment.amount | - |
+| status    | string  | -      | false    | pending,succeeded,failed | pending | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**Payout**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| sellerId  | string  | uuid   | false    | -    | -       | KYC required | idx   |
+| amount    | integer | int64  | false    | -    | -       | ≥ min       | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| status    | string  | -      | false    | pending,processing,succeeded,failed | pending | enum | idx |
+| method    | string  | -      | false    | bank,ewallet,crypto | bank | enum | idx |
+| createdAt | string  | date-time | false | - | now | ISO-8601 | - |
+
+**LedgerEntry**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | ksuid      | PK      |
+| entity    | string  | -      | false    | payment,refund,payout,fee,chargeback | payment | enum | idx |
+| entityId  | string  | string | false    | -    | -       | references respective id | idx |
+| side      | string  | -      | false    | debit,credit | debit | enum | idx |
+| amount    | integer | int64  | false    | -    | -       | ≥ 0        | idx     |
+| currency  | string  | iso4217| false    | -    | THB     | allowlist   | idx     |
+| createdAt | string  | date-time | false | - | now | ISO-8601    | - |
+
+**WebhookEvent**
+| field     | type    | format | nullable | enum | default | validation | indexes |
+|-----------|---------|--------|----------|------|---------|------------|---------|
+| id        | string  | string | false    | -    | -       | provider event id | PK  |
+| type      | string  | -      | false    | -    | -       | allowlisted types | idx |
+| payload   | object  | json   | false    | -    | -       | signature verified | -  |
+| receivedAt| string  | date-time | false | - | now | ISO-8601 | idx |
 
 #### Events, Jobs & Notifications
-- **Events:** `payhub.telemetry-slos.intent.created|authorized|captured|refunded|failed` payload: `id, merchantId, payerId, amount, currency, occurredAt, idempotencyKey`.
-- **Producers/Consumers:** PayHub API → ledger, notifications, analytics, reconciliation.
-- **Retry/backoff:** exponential (max 6 attempts) with DLQ/outbox; reconciliation job can replay.
-- **Notifications:** intent status changes → Telegram push / email → payer/merchant → templated + throttle/dedupe.
+- **Events:** `payhub.telemetry-slos.intent.created|confirmed|canceled`, `payhub.telemetry-slos.payment.settled|failed`, `payhub.telemetry-slos.refund.created|succeeded|failed`, `payhub.telemetry-slos.payout.created|processing|succeeded|failed`, `payhub.telemetry-slos.webhook.received|deduped` with payload: `ids, buyerId, sellerId, amount, currency, provider, actorId, occurredAt, idempotencyKey`.
+- **Producers/Consumers:** PayHub API → ledger, analytics, notifications, risk, reconciliation workers, accounting export.
+- **Retry/backoff:** exponential (6 attempts) with DLQ/outbox; reconciliation job compares PSP reports vs ledger to resolve drifts.
+- **Notifications:** receipts, refunds, payout status → Telegram/email → buyers/sellers/finance; throttle/dedupe applied.
 
 #### Subtasks (Delivery Plan)
-- **Backend:** CRUD and workflows for `/telemetry-slos`; validation; idempotency store; ledger append; outbox events; reconciliation jobs; feature flags/config.
-- **Frontend (MiniApp/WebApp):** payment intent screens; capture/refund CTAs; param mapping; empty/error states; telemetry wiring.
-- **QA:** contract tests (±), E2E persona flows (Payer/Merchant/Admin), abuse/security (authZ bypass, replay, rate-limit, HMAC/headers), perf (read p95 ≤ 300ms; write p95 ≤ 400ms), pagination deep-scroll + top-refresh.
-- **Docs/Runbooks:** merchant/admin handbooks; dashboards (auth/capture success, refund rates, error budget, p95 latencies); alerts on SLO burn.
+- **Backend:** intents/confirm/cancel; payments/charges; refunds; payouts; invoices; ledger; webhook ingest & signature verification; idempotency store; reconciliation; feature flags; config; outbox.
+- **Frontend (MiniApp/WebApp):** payment sheet; invoice view/pay; history lists (payments/refunds/payouts); error/empty states; param mapping; Profile Bento.
+- **QA:** contract tests (±); E2E (create intent → confirm → settle → refund → payout); abuse/security (authZ bypass, replay, rate-limit, webhook signature, HMAC/headers); perf (read p95 ≤ 200ms, write p95 ≤ 350ms); pagination deep-scroll + top-refresh.
+- **Docs/Runbooks:** provider integration guides, webhook secrets rotation, reconciliation SOP; dashboards (intent success, confirm success, payout success, p95s, error budget); alerts on SLO burn.
 
 #### Definition of Done (DoD)
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B9.2.1** — *As SRE, I trace money flows,* so that *we meet SLOs.*  
-**AC**: traces across services; key metrics: time‑to‑credit, time‑to‑broadcast, failure rates, invoice paid time; error budget alerts.
+**AC**: traces across services; key metrics: time‑to‑credit, time‑to‑broadcast, failure rates, invoice paid time; error budget alerts.  fileciteturn9file7
 
 ---
 
 # Section C — End‑to‑End Scenarios (Swimlanes)
 
 1. **E2E‑H1: Deposit → Credit** — User creates intent → sends on‑chain → N confirmations → credit ledger → balance visible in WebApp with toast.  
-2. **E2E‑H2: Withdraw (KYC gate)** — User requests → **403** (needs Investor) → badge apply in WebApp → approval → retry → **202** → broadcaster settles → receipt.  
+2. **E2E‑H2: Withdraw (KYC gate)** — User requests → **403** (needs Investor) → badge apply in WebApp → approval → retry → **202** → broadcaster settles → receipt. fileciteturn9file13  
 3. **E2E‑H3: Conversion** — User quotes → executes within expiry → rates verified by signed oracle → balances move atomically.  
-4. **E2E‑H4: Overage invoice unlock** — User hits free‑tier ceiling (e.g., alerts) → **402** → pays invoice → meters refresh across services. 
+4. **E2E‑H4: Overage invoice unlock** — User hits free‑tier ceiling (e.g., alerts) → **402** → pays invoice → meters refresh across services. fileciteturn9file8  
 5. **E2E‑H5: Reorg during deposit** — Credit after confs → chain reorg detected → rollback journal → re‑credit after re‑confirm; user sees banner.  
-6. **E2E‑H6: Withdrawal fee spike → RBF** — Status stuck **confirming**; broadcaster bumps fee (RBF) → settles; receipts updated. 
+6. **E2E‑H6: Withdrawal fee spike → RBF** — Status stuck **confirming**; broadcaster bumps fee (RBF) → settles; receipts updated. fileciteturn9file7
 
 ---
 
 # Section D — Traceability Matrix
 | Feature | APIs | Entities | Events | UI Screens | Test IDs |
 |---------|------|----------|--------|------------|----------|
-| Feature B1.1 — Provision account & balances | `GET /provision-account-balances`, `POST /provision-account-balances`, `GET /provision-account-balances/{id}`, `PATCH /provision-account-balances/{id}`, `DELETE /provision-account-balances/{id}` | `provision-account-balances` | `payhub.provision-account-balances.*` | List, Detail, Create/Edit | `TC-PROVISION-ACCOUNT-BALANCES-*` |
-| Feature B1.2 — Double‑entry ledger | `GET /doubleentry-ledgers`, `POST /doubleentry-ledgers`, `GET /doubleentry-ledgers/{id}`, `PATCH /doubleentry-ledgers/{id}`, `DELETE /doubleentry-ledgers/{id}` | `doubleentry-ledger` | `payhub.doubleentry-ledger.*` | List, Detail, Create/Edit | `TC-DOUBLEENTRY-LEDGER-*` |
-| Feature B2.1 — Create hold | `GET /create-holds`, `POST /create-holds`, `GET /create-holds/{id}`, `PATCH /create-holds/{id}`, `DELETE /create-holds/{id}` | `create-hold` | `payhub.create-hold.*` | List, Detail, Create/Edit | `TC-CREATE-HOLD-*` |
-| Feature B2.2 — Settle / release | `GET /settle-releases`, `POST /settle-releases`, `GET /settle-releases/{id}`, `PATCH /settle-releases/{id}`, `DELETE /settle-releases/{id}` | `settle-release` | `payhub.settle-release.*` | List, Detail, Create/Edit | `TC-SETTLE-RELEASE-*` |
-| Feature B3.1 — Create deposit intent | `GET /create-deposit-intents`, `POST /create-deposit-intents`, `GET /create-deposit-intents/{id}`, `PATCH /create-deposit-intents/{id}`, `DELETE /create-deposit-intents/{id}` | `create-deposit-intent` | `payhub.create-deposit-intent.*` | List, Detail, Create/Edit | `TC-CREATE-DEPOSIT-INTENT-*` |
-| Feature B4.1 — Create withdrawal request (KYC‑gated) | `GET /create-withdrawal-request-kycgateds`, `POST /create-withdrawal-request-kycgateds`, `GET /create-withdrawal-request-kycgateds/{id}`, `PATCH /create-withdrawal-request-kycgateds/{id}`, `DELETE /create-withdrawal-request-kycgateds/{id}` | `create-withdrawal-request-kycgated` | `payhub.create-withdrawal-request-kycgated.*` | List, Detail, Create/Edit | `TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-*` |
-| Feature B5.1 — Quote | `GET /quotes`, `POST /quotes`, `GET /quotes/{id}`, `PATCH /quotes/{id}`, `DELETE /quotes/{id}` | `quote` | `payhub.quote.*` | List, Detail, Create/Edit | `TC-QUOTE-*` |
-| Feature B5.2 — Execute | `GET /executes`, `POST /executes`, `GET /executes/{id}`, `PATCH /executes/{id}`, `DELETE /executes/{id}` | `execute` | `payhub.execute.*` | List, Detail, Create/Edit | `TC-EXECUTE-*` |
-| Feature B6.1 — Issue & pay invoices | `GET /issue-pay-invoices`, `POST /issue-pay-invoices`, `GET /issue-pay-invoices/{id}`, `PATCH /issue-pay-invoices/{id}`, `DELETE /issue-pay-invoices/{id}` | `issue-pay-invoices` | `payhub.issue-pay-invoices.*` | List, Detail, Create/Edit | `TC-ISSUE-PAY-INVOICES-*` |
-| Feature B6.2 — Manual refunds | `GET /manual-refunds`, `POST /manual-refunds`, `GET /manual-refunds/{id}`, `PATCH /manual-refunds/{id}`, `DELETE /manual-refunds/{id}` | `manual-refunds` | `payhub.manual-refunds.*` | List, Detail, Create/Edit | `TC-MANUAL-REFUNDS-*` |
-| Feature B7.1 — Limits & velocity profiles | `GET /limits-velocity-profiles`, `POST /limits-velocity-profiles`, `GET /limits-velocity-profiles/{id}`, `PATCH /limits-velocity-profiles/{id}`, `DELETE /limits-velocity-profiles/{id}` | `limits-velocity-profiles` | `payhub.limits-velocity-profiles.*` | List, Detail, Create/Edit | `TC-LIMITS-VELOCITY-PROFILES-*` |
-| Feature B7.2 — AML screening & case management | `GET /aml-screening-case-managements`, `POST /aml-screening-case-managements`, `GET /aml-screening-case-managements/{id}`, `PATCH /aml-screening-case-managements/{id}`, `DELETE /aml-screening-case-managements/{id}` | `aml-screening-case-management` | `payhub.aml-screening-case-management.*` | List, Detail, Create/Edit | `TC-AML-SCREENING-CASE-MANAGEMENT-*` |
-| Feature B7.3 — Exports for audit | `GET /exports-for-audits`, `POST /exports-for-audits`, `GET /exports-for-audits/{id}`, `PATCH /exports-for-audits/{id}`, `DELETE /exports-for-audits/{id}` | `exports-for-audit` | `payhub.exports-for-audit.*` | List, Detail, Create/Edit | `TC-EXPORTS-FOR-AUDIT-*` |
-| Feature B8.1 — Daily close | `GET /daily-closes`, `POST /daily-closes`, `GET /daily-closes/{id}`, `PATCH /daily-closes/{id}`, `DELETE /daily-closes/{id}` | `daily-close` | `payhub.daily-close.*` | List, Detail, Create/Edit | `TC-DAILY-CLOSE-*` |
-| Feature B8.2 — Fee & rule reports | `GET /fee-rule-reports`, `POST /fee-rule-reports`, `GET /fee-rule-reports/{id}`, `PATCH /fee-rule-reports/{id}`, `DELETE /fee-rule-reports/{id}` | `fee-rule-reports` | `payhub.fee-rule-reports.*` | List, Detail, Create/Edit | `TC-FEE-RULE-REPORTS-*` |
-| Feature B9.1 — Idempotency & retries | `GET /idempotency-retries`, `POST /idempotency-retries`, `GET /idempotency-retries/{id}`, `PATCH /idempotency-retries/{id}`, `DELETE /idempotency-retries/{id}` | `idempotency-retries` | `payhub.idempotency-retries.*` | List, Detail, Create/Edit | `TC-IDEMPOTENCY-RETRIES-*` |
-| Feature B9.2 — Telemetry & SLOs | `GET /telemetry-slos`, `POST /telemetry-slos`, `GET /telemetry-slos/{id}`, `PATCH /telemetry-slos/{id}`, `DELETE /telemetry-slos/{id}` | `telemetry-slos` | `payhub.telemetry-slos.*` | List, Detail, Create/Edit | `TC-TELEMETRY-SLOS-*` |
+| Feature B1.1 — Provision account & balances | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.provision-account-balances.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-PROVISION-ACCOUNT-BALANCES-*` |
+| Feature B1.2 — Double‑entry ledger | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.doubleentry-ledger.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-DOUBLEENTRY-LEDGER-*` |
+| Feature B2.1 — Create hold | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.create-hold.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-CREATE-HOLD-*` |
+| Feature B2.2 — Settle / release | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.settle-release.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-SETTLE-RELEASE-*` |
+| Feature B3.1 — Create deposit intent | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.create-deposit-intent.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-CREATE-DEPOSIT-INTENT-*` |
+| Feature B4.1 — Create withdrawal request (KYC‑gated) | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.create-withdrawal-request-kycgated.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-*` |
+| Feature B5.1 — Quote | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.quote.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-QUOTE-*` |
+| Feature B5.2 — Execute | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.execute.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-EXECUTE-*` |
+| Feature B6.1 — Issue & pay invoices | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.issue-pay-invoices.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-ISSUE-PAY-INVOICES-*` |
+| Feature B6.2 — Manual refunds | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.manual-refunds.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-MANUAL-REFUNDS-*` |
+| Feature B7.1 — Limits & velocity profiles | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.limits-velocity-profiles.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-LIMITS-VELOCITY-PROFILES-*` |
+| Feature B7.2 — AML screening & case management | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.aml-screening-case-management.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-AML-SCREENING-CASE-MANAGEMENT-*` |
+| Feature B7.3 — Exports for audit | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.exports-for-audit.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-EXPORTS-FOR-AUDIT-*` |
+| Feature B8.1 — Daily close | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.daily-close.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-DAILY-CLOSE-*` |
+| Feature B8.2 — Fee & rule reports | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.fee-rule-reports.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-FEE-RULE-REPORTS-*` |
+| Feature B9.1 — Idempotency & retries | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.idempotency-retries.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-IDEMPOTENCY-RETRIES-*` |
+| Feature B9.2 — Telemetry & SLOs | `POST /payments/intents`, `POST /payments/intents/{id}/(confirm|cancel)`, `POST /refunds`, `POST /payouts`, `POST /invoices`, `GET /ledger/entries`, `POST /webhooks/ingest` | `paymentIntent`, `payment`, `invoice`, `refund`, `payout`, `ledgerEntry`, `webhookEvent` | `payhub.telemetry-slos.*` | Payment Sheet, Invoices, History, Payouts, Ledger | `TC-TELEMETRY-SLOS-*` |
 
 | Story | APIs (client→service) | Entities | Events (emit/consume) | Notes |
 |---|---|---|---|---|
@@ -1757,9 +2832,9 @@ Repo: tg-miniapp-payhub-service
 | B8.1.1 | daily close | RECONCILIATION_REPORT | `payhub.reconciliation.completed@v1` | Close |
 | B8.2.1 | fee report | FEE_SCHEDULE | — | Reports |
 | B9.1.1 | write paths | IDEMPOTENCY_KEY | — | Idempotency |
-| B9.2.1 | telemetry | — | — | Observability |  
+| B9.2.1 | telemetry | — | — | Observability |  fileciteturn9file10
 
-**Deltas vs old UserStories**: explicit **double‑entry**, deposit **reorg** handling, withdrawal **RBF**, conversions with **signed oracle**, full invoice/refund lifecycle, **limits/velocity**, and **daily close reconciliation** — aligned with UI baselines for all list surfaces. 
+**Deltas vs old UserStories**: explicit **double‑entry**, deposit **reorg** handling, withdrawal **RBF**, conversions with **signed oracle**, full invoice/refund lifecycle, **limits/velocity**, and **daily close reconciliation** — aligned with UI baselines for all list surfaces. fileciteturn9file7
 
 ---
 
@@ -1769,7 +2844,7 @@ Repo: tg-miniapp-payhub-service
 - Exact fee schedule and **maxSlippageBp** defaults per asset.  
 - Address‑risk provider and **appeal** SLAs.  
 - Invoice **purpose catalog** and billing periods for each overage metric.  
-- Who owns the **address book** canonical store (Portal vs Payhub) and first‑use **soft delay** policy. 
+- Who owns the **address book** canonical store (Portal vs Payhub) and first‑use **soft delay** policy.  fileciteturn9file10
 
 ---
 
@@ -1871,7 +2946,7 @@ Resources: `ACCOUNT, BALANCE, LEDGER_ENTRY, JOURNAL_TX, HOLD, SETTLEMENT, RECEIP
 | payhub.invoice.updated@v1 | Payhub | WebApp/Services | `{invoiceId,status}` | `invoiceId` | 5× |
 | payhub.conversion.quote.created@v1 | Payhub | WebApp | `{quoteId,from,to,amountFrom,amountTo}` | `orderId` | 5× |
 | payhub.conversion.executed@v1 | Payhub | WebApp | `{orderId,status}` | `orderId` | 5× |
-| payhub.reconciliation.completed@v1 | Payhub | Finance, Auditor | `{day, reportId}` | `day` | 3× | 
+| payhub.reconciliation.completed@v1 | Payhub | Finance, Auditor | `{day, reportId}` | `day` | 3× |  fileciteturn9file7
 
 ---
 
@@ -1883,7 +2958,7 @@ Resources: `ACCOUNT, BALANCE, LEDGER_ENTRY, JOURNAL_TX, HOLD, SETTLEMENT, RECEIP
 - **Privacy & compliance**: KYC evidence stays in Identity; Payhub stores references only; ledger retention per jurisdiction; DSAR export path.  
 - **Resilience**: circuit breakers for RPCs, fee oracle fallbacks, DLQ with replay, reconciliation to detect drifts, RBF on stuck withdrawals.  
 - **Observability**: logs/metrics/traces with correlation IDs; dashboards for time‑to‑credit, time‑to‑broadcast, failure buckets.  
-- **Localization/timezones**: user‑visible timestamps **GMT+7** in UIs; ledger timestamps in UTC. 
+- **Localization/timezones**: user‑visible timestamps **GMT+7** in UIs; ledger timestamps in UTC.  fileciteturn9file7
 
 ---
 
