@@ -1,9 +1,5 @@
 Repo: tg-miniapp-payhub-service
-File: UserStories.md
-SHA-256: 1ab336afd57038e1f1546428c1f49968a069d11acd8963cc3dda90181f5dbe22
-Bytes: 22350
-Generated: 2025-10-03 14:39 GMT+7
-Sources: old UserStories.md (baseline), Guide
+
 
 ---
 
