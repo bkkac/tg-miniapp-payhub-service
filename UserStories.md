@@ -1,9 +1,4 @@
 Repo: tg-miniapp-payhub-service
-File: UserStories.md
-SHA-256: 84cbad7792b49b9389432c05819ab014d784aeaca33e70e3f3f325f427a6b8c7
-Bytes: 22885
-Generated: 2025-10-03 16:12 GMT+7
-Sources:  old UserStories.md (baseline), Guide
 
 ---
 # Section A — Personas & Stakeholders
@@ -25,7 +20,7 @@ Sources:  old UserStories.md (baseline), Guide
 - **SRE/Ops** — DLQs, SLOs, incident toggles.  
 - **Auditor** — read‑only exports and trails.
 
-> See **Appendix A1 — Stakeholder Catalog** for responsibilities/permissions/KPIs (derived from baseline & guide). fileciteturn9file11 fileciteturn9file0
+> See **Appendix A1 — Stakeholder Catalog** for responsibilities/permissions/KPIs (derived from baseline & guide). 
 
 ---
 
@@ -192,7 +187,7 @@ Sources:  old UserStories.md (baseline), Guide
 2. **Given** account exists, **then** 201 returns same `accountId`; no dup rows.  
 3. **Given** Identity down, **then** **502 identity_unavailable** with `retry_after`.  
 **Non‑Happy**: invalid `userId` → **404** after introspection; missing scope → **403**.  
-**Observability**: `account.create.latency`, dedupe count.  fileciteturn9file11
+**Observability**: `account.create.latency`, dedupe count. 
 
 ### Feature B1.2 — Double‑entry ledger  
 
@@ -352,7 +347,7 @@ Sources:  old UserStories.md (baseline), Guide
 1. Every mutation writes **two postings** in `LEDGER_ENTRY` within a `JOURNAL_TX` (debit/credit), immutable.  
 2. API returns `journalTxId`; repeated write with same **Idempotency-Key** → same `journalTxId`.  
 3. Outbox publishes events after commit; replay is idempotent.  
-**Non‑Happy**: partial write pre‑publish → outbox replays; journal monotonicity enforced.  fileciteturn9file11
+**Non‑Happy**: partial write pre‑publish → outbox replays; journal monotonicity enforced.  
 
 ---
 
@@ -845,7 +840,7 @@ Sources:  old UserStories.md (baseline), Guide
 3. Too small (< min) stays **uncredited**; can be auto‑aggregated per policy.  
 **Non‑Happy**: reorg before finality → rollback credit; mixer/blocked source → **hold & review** with case id.  
 **Security**: generate addresses via xpub/HSM; never reuse memos incorrectly.  
-**Observability**: time‑to‑credit, reorg count.  fileciteturn9file11
+**Observability**: time‑to‑credit, reorg count.  
 
 **UI & Interaction Model (Deposits)**  
 - List shows **latest 20 deposit intents**; **infinite scroll**; **pull‑to‑refresh**; search by **txId/network/tags**.  
@@ -1017,7 +1012,7 @@ Sources:  old UserStories.md (baseline), Guide
 2. Broadcaster builds/sends tx; supports **RBF**; status: `queued→broadcast→confirming→settled|failed`.  
 3. Cancel before broadcast: `DELETE /v1/withdrawals/{id}` idempotent.  
 **Non‑Happy**: fee spike → **delayed** status; address risk hit → **held** and case opened.  
-**Observability**: p95 time‑to‑broadcast; failure code mix.  fileciteturn9file10
+**Observability**: p95 time‑to‑broadcast; failure code mix.  
 
 **UI & Interaction Model (Withdrawals)**  
 - **Latest 20** withdrawal requests; **infinite scroll**; **pull‑to‑refresh**; search by **txId/address/tags**.  
@@ -1343,7 +1338,7 @@ Sources:  old UserStories.md (baseline), Guide
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B5.2.1** — *As an End User, I execute a valid quote,* so that *balances update atomically.*  
-**AC**: `POST /v1/conversions/execute {quoteId}` performs journal move; idempotent by `quoteId`; receipt emitted.  fileciteturn9file10
+**AC**: `POST /v1/conversions/execute {quoteId}` performs journal move; idempotent by `quoteId`; receipt emitted.  
 
 **UI & Interaction Model (Conversions)**  
 - **Latest 20** conversion orders; **infinite scroll**; **pull‑to‑refresh**; search by **pair/quoteId/tags**.  
@@ -1666,14 +1661,14 @@ Sources:  old UserStories.md (baseline), Guide
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B6.2.1** — *As Finance Ops, I issue a manual refund,* so that *I can resolve exceptions.*  
-**AC**: `POST /v1/admin/refunds {invoiceId|journalTxId, reason}`; idempotent; receipt emitted.  fileciteturn9file10
+**AC**: `POST /v1/admin/refunds {invoiceId|journalTxId, reason}`; idempotent; receipt emitted. 
 
 **UI & Interaction Model (Invoices & Receipts)**  
 - **Latest 20** invoices/receipts; **infinite scroll**; **pull‑to‑refresh**; search by **invoiceId/purpose/tags**.  
 - **Sort**: Date, Popular, Featured, View.  
 - **Filter**: currency, amount range, status (issued/paying/paid/expired/refunded).  
 - **Actions**: Bookmark / Comment / Report / Share.  
-- **EXP**: on‑time payment/comment/share increment EXP (cooldowns).  fileciteturn9file4
+- **EXP**: on‑time payment/comment/share increment EXP (cooldowns). 
 
 ---
 
@@ -2145,7 +2140,7 @@ Sources:  old UserStories.md (baseline), Guide
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B7.3.1** — *As Auditor, I export immutable journals & reconciliation artifacts.*  
-**AC**: CSV/Parquet export; signed manifest; rate‑limited; redactions applied.  fileciteturn9file10
+**AC**: CSV/Parquet export; signed manifest; rate‑limited; redactions applied. 
 
 ---
 
@@ -2461,7 +2456,7 @@ Sources:  old UserStories.md (baseline), Guide
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B8.2.1** — *As Finance Ops, I review fee take and rules applied.*  
-**AC**: fee schedule snapshot vs postings; anomalies reported.  fileciteturn9file10
+**AC**: fee schedule snapshot vs postings; anomalies reported. 
 
 ---
 
@@ -2777,18 +2772,18 @@ Sources:  old UserStories.md (baseline), Guide
 - All ACs pass; OpenAPI 3.1 paths/components merged; CI contract tests green.
 - Telemetry, tracing, metrics, and alerts wired; dashboards live; security review; runbook URL updated.
 **Story B9.2.1** — *As SRE, I trace money flows,* so that *we meet SLOs.*  
-**AC**: traces across services; key metrics: time‑to‑credit, time‑to‑broadcast, failure rates, invoice paid time; error budget alerts.  fileciteturn9file7
+**AC**: traces across services; key metrics: time‑to‑credit, time‑to‑broadcast, failure rates, invoice paid time; error budget alerts.
 
 ---
 
 # Section C — End‑to‑End Scenarios (Swimlanes)
 
 1. **E2E‑H1: Deposit → Credit** — User creates intent → sends on‑chain → N confirmations → credit ledger → balance visible in WebApp with toast.  
-2. **E2E‑H2: Withdraw (KYC gate)** — User requests → **403** (needs Investor) → badge apply in WebApp → approval → retry → **202** → broadcaster settles → receipt. fileciteturn9file13  
+2. **E2E‑H2: Withdraw (KYC gate)** — User requests → **403** (needs Investor) → badge apply in WebApp → approval → retry → **202** → broadcaster settles → receipt. 
 3. **E2E‑H3: Conversion** — User quotes → executes within expiry → rates verified by signed oracle → balances move atomically.  
-4. **E2E‑H4: Overage invoice unlock** — User hits free‑tier ceiling (e.g., alerts) → **402** → pays invoice → meters refresh across services. fileciteturn9file8  
+4. **E2E‑H4: Overage invoice unlock** — User hits free‑tier ceiling (e.g., alerts) → **402** → pays invoice → meters refresh across services. 
 5. **E2E‑H5: Reorg during deposit** — Credit after confs → chain reorg detected → rollback journal → re‑credit after re‑confirm; user sees banner.  
-6. **E2E‑H6: Withdrawal fee spike → RBF** — Status stuck **confirming**; broadcaster bumps fee (RBF) → settles; receipts updated. fileciteturn9file7
+6. **E2E‑H6: Withdrawal fee spike → RBF** — Status stuck **confirming**; broadcaster bumps fee (RBF) → settles; receipts updated. 
 
 ---
 
@@ -2832,10 +2827,9 @@ Sources:  old UserStories.md (baseline), Guide
 | B8.1.1 | daily close | RECONCILIATION_REPORT | `payhub.reconciliation.completed@v1` | Close |
 | B8.2.1 | fee report | FEE_SCHEDULE | — | Reports |
 | B9.1.1 | write paths | IDEMPOTENCY_KEY | — | Idempotency |
-| B9.2.1 | telemetry | — | — | Observability |  fileciteturn9file10
+| B9.2.1 | telemetry | — | — | Observability |  
 
-**Deltas vs old UserStories**: explicit **double‑entry**, deposit **reorg** handling, withdrawal **RBF**, conversions with **signed oracle**, full invoice/refund lifecycle, **limits/velocity**, and **daily close reconciliation** — aligned with UI baselines for all list surfaces. fileciteturn9file7
-
+**Deltas vs old UserStories**: explicit **double‑entry**, deposit **reorg** handling, withdrawal **RBF**, conversions with **signed oracle**, full invoice/refund lifecycle, **limits/velocity**, and **daily close reconciliation** — aligned with UI baselines for all list surfaces. 
 ---
 
 # Section E — Assumptions & Open Questions
@@ -2844,7 +2838,7 @@ Sources:  old UserStories.md (baseline), Guide
 - Exact fee schedule and **maxSlippageBp** defaults per asset.  
 - Address‑risk provider and **appeal** SLAs.  
 - Invoice **purpose catalog** and billing periods for each overage metric.  
-- Who owns the **address book** canonical store (Portal vs Payhub) and first‑use **soft delay** policy.  fileciteturn9file10
+- Who owns the **address book** canonical store (Portal vs Payhub) and first‑use **soft delay** policy. 
 
 ---
 
@@ -2946,7 +2940,7 @@ Resources: `ACCOUNT, BALANCE, LEDGER_ENTRY, JOURNAL_TX, HOLD, SETTLEMENT, RECEIP
 | payhub.invoice.updated@v1 | Payhub | WebApp/Services | `{invoiceId,status}` | `invoiceId` | 5× |
 | payhub.conversion.quote.created@v1 | Payhub | WebApp | `{quoteId,from,to,amountFrom,amountTo}` | `orderId` | 5× |
 | payhub.conversion.executed@v1 | Payhub | WebApp | `{orderId,status}` | `orderId` | 5× |
-| payhub.reconciliation.completed@v1 | Payhub | Finance, Auditor | `{day, reportId}` | `day` | 3× |  fileciteturn9file7
+| payhub.reconciliation.completed@v1 | Payhub | Finance, Auditor | `{day, reportId}` | `day` | 3× | 
 
 ---
 
@@ -2958,7 +2952,7 @@ Resources: `ACCOUNT, BALANCE, LEDGER_ENTRY, JOURNAL_TX, HOLD, SETTLEMENT, RECEIP
 - **Privacy & compliance**: KYC evidence stays in Identity; Payhub stores references only; ledger retention per jurisdiction; DSAR export path.  
 - **Resilience**: circuit breakers for RPCs, fee oracle fallbacks, DLQ with replay, reconciliation to detect drifts, RBF on stuck withdrawals.  
 - **Observability**: logs/metrics/traces with correlation IDs; dashboards for time‑to‑credit, time‑to‑broadcast, failure buckets.  
-- **Localization/timezones**: user‑visible timestamps **GMT+7** in UIs; ledger timestamps in UTC.  fileciteturn9file7
+- **Localization/timezones**: user‑visible timestamps **GMT+7** in UIs; ledger timestamps in UTC.
 
 ---
 
