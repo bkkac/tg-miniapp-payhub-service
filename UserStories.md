@@ -21,7 +21,7 @@ Repo: tg-miniapp-payhub-service
 - **SRE/Ops** — DLQs, SLOs, incident toggles.  
 - **Auditor** — read‑only exports and trails.
 
-> See **Appendix A1 — Stakeholder Catalog** for responsibilities/permissions/KPIs (derived from baseline & guide). fileciteturn9file11 fileciteturn9file0
+> See **Appendix A1 — Stakeholder Catalog** for responsibilities/permissions/KPIs (derived from baseline & guide).  fileciteturn9file0
 
 ---
 
@@ -36,7 +36,7 @@ Repo: tg-miniapp-payhub-service
 2. **Given** account exists, **then** 201 returns same `accountId`; no dup rows.  
 3. **Given** Identity down, **then** **502 identity_unavailable** with `retry_after`.  
 **Non‑Happy**: invalid `userId` → **404** after introspection; missing scope → **403**.  
-**Observability**: `account.create.latency`, dedupe count.  fileciteturn9file11
+**Observability**: `account.create.latency`, dedupe count.  
 
 ### Feature B1.2 — Double‑entry ledger  
 **Story B1.2.1** — *As Finance Ops, I require double‑entry postings for every money move,* so that *audits reconcile.*  
@@ -44,7 +44,7 @@ Repo: tg-miniapp-payhub-service
 1. Every mutation writes **two postings** in `LEDGER_ENTRY` within a `JOURNAL_TX` (debit/credit), immutable.  
 2. API returns `journalTxId`; repeated write with same **Idempotency-Key** → same `journalTxId`.  
 3. Outbox publishes events after commit; replay is idempotent.  
-**Non‑Happy**: partial write pre‑publish → outbox replays; journal monotonicity enforced.  fileciteturn9file11
+**Non‑Happy**: partial write pre‑publish → outbox replays; journal monotonicity enforced.  
 
 ---
 
@@ -81,7 +81,7 @@ Repo: tg-miniapp-payhub-service
 3. Too small (< min) stays **uncredited**; can be auto‑aggregated per policy.  
 **Non‑Happy**: reorg before finality → rollback credit; mixer/blocked source → **hold & review** with case id.  
 **Security**: generate addresses via xpub/HSM; never reuse memos incorrectly.  
-**Observability**: time‑to‑credit, reorg count.  fileciteturn9file11
+**Observability**: time‑to‑credit, reorg count.  
 
 **UI & Interaction Model (Deposits)**  
 - List shows **latest 20 deposit intents**; **infinite scroll**; **pull‑to‑refresh**; search by **txId/network/tags**.  
