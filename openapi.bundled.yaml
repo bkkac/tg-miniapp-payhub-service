@@ -47,13 +47,34 @@ paths:
       operationId: getMyWallet
       parameters:
       - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Since'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - $ref: '#/components/parameters/Filter'
       responses:
         '200':
           description: Wallet overview
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WalletEnvelope'
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type:
+                    - string
+                    - 'null'
+                  total:
+                    type: integer
+                    minimum: 0
+                required:
+                - data
+                - nextCursor
               examples:
                 ok:
                   value:
@@ -78,6 +99,60 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/wallets/me/ledger-entries:
     get:
       tags:
@@ -98,7 +173,22 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LedgerEntryList'
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type:
+                    - string
+                    - 'null'
+                  total:
+                    type: integer
+                    minimum: 0
+                required:
+                - data
+                - nextCursor
               examples:
                 page:
                   value:
@@ -125,6 +215,66 @@ paths:
                       occurredAt: '2025-10-09T14:20:00+07:00'
                     nextCursor: c3RhdGU6MQ==
                     total: 2
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/holds:
     get:
       tags:
@@ -145,7 +295,22 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HoldList'
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type:
+                    - string
+                    - 'null'
+                  total:
+                    type: integer
+                    minimum: 0
+                required:
+                - data
+                - nextCursor
               examples:
                 ok:
                   value:
@@ -161,6 +326,66 @@ paths:
                       updatedAt: '2025-10-09T14:20:00+07:00'
                     nextCursor: null
                     total: 1
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     post:
       tags:
       - Holds
@@ -222,6 +447,48 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/holds/{id}:
     get:
       tags:
@@ -242,8 +509,70 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HoldEnvelope'
+              examples:
+                sampleSuccess:
+                  summary: OK
+                  value:
+                    data: []
+                    nextCursor: null
+                    total: 0
+                    generatedAt: '2025-10-10T16:18:00+07:00'
         '404':
           description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
           content:
             application/problem+json:
               schema:
@@ -299,6 +628,60 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/holds/{id}/release:
     post:
       tags:
@@ -322,6 +705,60 @@ paths:
                 $ref: '#/components/schemas/SettlementEnvelope'
         '409':
           description: Hold already captured or released
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
           content:
             application/problem+json:
               schema:
@@ -354,6 +791,60 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/settlements:
     post:
       tags:
@@ -378,6 +869,60 @@ paths:
                 $ref: '#/components/schemas/SettlementEnvelope'
         '409':
           description: Duplicate settlement for same ref
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
           content:
             application/problem+json:
               schema:
@@ -415,6 +960,60 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/deposits:
     get:
       tags:
@@ -435,7 +1034,90 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DepositList'
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type:
+                    - string
+                    - 'null'
+                  total:
+                    type: integer
+                    minimum: 0
+                required:
+                - data
+                - nextCursor
+              examples:
+                sampleSuccess:
+                  summary: OK
+                  value:
+                    data: []
+                    nextCursor: null
+                    total: 0
+                    generatedAt: '2025-10-10T16:18:00+07:00'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     post:
       tags:
       - Deposits
@@ -457,6 +1139,66 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DepositEnvelope'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/withdrawals:
     get:
       tags:
@@ -477,7 +1219,90 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WithdrawalList'
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type:
+                    - string
+                    - 'null'
+                  total:
+                    type: integer
+                    minimum: 0
+                required:
+                - data
+                - nextCursor
+              examples:
+                sampleSuccess:
+                  summary: OK
+                  value:
+                    data: []
+                    nextCursor: null
+                    total: 0
+                    generatedAt: '2025-10-10T16:18:00+07:00'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     post:
       tags:
       - Withdrawals
@@ -511,6 +1336,54 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/withdrawals/{id}/cancel:
     post:
       tags:
@@ -532,8 +1405,70 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WithdrawalEnvelope'
+              examples:
+                sampleSuccess:
+                  summary: OK
+                  value:
+                    data: []
+                    nextCursor: null
+                    total: 0
+                    generatedAt: '2025-10-10T16:18:00+07:00'
         '409':
           description: Not cancelable in current state
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
           content:
             application/problem+json:
               schema:
@@ -558,7 +1493,90 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InvoiceList'
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type:
+                    - string
+                    - 'null'
+                  total:
+                    type: integer
+                    minimum: 0
+                required:
+                - data
+                - nextCursor
+              examples:
+                sampleSuccess:
+                  summary: OK
+                  value:
+                    data: []
+                    nextCursor: null
+                    total: 0
+                    generatedAt: '2025-10-10T16:18:00+07:00'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/quotas-limits:
     get:
       tags:
@@ -568,13 +1586,102 @@ paths:
       operationId: getQuotasLimits
       parameters:
       - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Since'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - $ref: '#/components/parameters/Filter'
       responses:
         '200':
           description: Quotas & limits
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QuotaLimitsEnvelope'
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type:
+                    - string
+                    - 'null'
+                  total:
+                    type: integer
+                    minimum: 0
+                required:
+                - data
+                - nextCursor
+              examples:
+                sampleSuccess:
+                  summary: OK
+                  value:
+                    data: []
+                    nextCursor: null
+                    total: 0
+                    generatedAt: '2025-10-10T16:18:00+07:00'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /v1/compliance/checks:
     post:
       tags:
@@ -597,8 +1704,70 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ComplianceCheckEnvelope'
+              examples:
+                sampleSuccess:
+                  summary: OK
+                  value:
+                    data: []
+                    nextCursor: null
+                    total: 0
+                    generatedAt: '2025-10-10T16:18:00+07:00'
         '403':
           description: Blocked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sampleError:
+                  summary: ProblemDetails
+                  value:
+                    code: validation_error
+                    message: Invalid payload
+                    details:
+                      field: name
+                    traceId: req_abc123
+        '429':
+          description: Added by bundled fix-bot
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+          headers:
+            Retry-After:
+              $ref: '#/components/parameters/RetryAfter'
+        '500':
+          description: Added by bundled fix-bot
           content:
             application/problem+json:
               schema:
@@ -681,6 +1850,14 @@ components:
       schema:
         type: object
         additionalProperties: true
+    RetryAfter:
+      name: Retry-After
+      in: header
+      required: false
+      description: Seconds to wait before retrying (rate limiting).
+      schema:
+        type: integer
+        minimum: 1
   schemas:
     ProblemDetails:
       type: object
@@ -1381,3 +2558,5 @@ x-jobs:
   schedule: '*/1 * * * *'
 - name: invoice-issuer
   schedule: 0 * * * *
+x-depends-on:
+- tg-miniapp-identity-service
