@@ -1,0 +1,1383 @@
+openapi: 3.1.0
+info:
+  title: tg-miniapp-payhub-service API
+  version: 1.0.0
+  description: 'Payments & ledger service for FUZE Mini App. Manages custodial wallets,
+    balances, double-entry ledger, holds/authorizations for gameplay stakes, settlement,
+    refunds, deposits/withdrawals, invoices/quotas, and compliance checks. Follows
+    the canonical API contract from "The API Specification: A Technical Contract for
+    Modern Development".
+
+    '
+  x-service-id: tg-miniapp-payhub-service
+  x-depends-on:
+  - tg-miniapp-identity-service
+  - tg-web3-portal
+  - tg-miniapp-events-service
+  - tg-miniapp-config
+  - tg-miniapp-shared
+servers:
+- url: https://payhub.fuze.ac
+  description: production
+- url: https://staging-payhub.fuze.ac
+  description: staging
+- url: http://localhost:{port}
+  description: local
+  variables:
+    port:
+      default: '8085'
+security:
+- bearerAuth: []
+tags:
+- name: Wallets
+- name: Ledger
+- name: Holds
+- name: Transfers & Settlements
+- name: Deposits
+- name: Withdrawals
+- name: Invoices & Quotas
+- name: Compliance & Limits
+- name: Admin
+paths:
+  /v1/wallets/me:
+    get:
+      tags:
+      - Wallets
+      summary: Get my wallet overview (balances & limits)
+      operationId: getMyWallet
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Wallet overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletEnvelope'
+              examples:
+                ok:
+                  value:
+                    data:
+                      userId: 018fb001-3b8b-7a76-9b7e-162ac5a3b8c2
+                      balances:
+                      - asset: STAR
+                        free: 12500
+                        locked: 300
+                      - asset: USDT
+                        free: 250.5
+                        locked: 0
+                      limits:
+                        dailyWithdrawUsd: 10000
+                        remainingWithdrawUsd: 9800
+                        tier: kyc_level_2
+                      updatedAt: '2025-10-09T14:20:00+07:00'
+                    nextCursor: null
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/wallets/me/ledger-entries:
+    get:
+      tags:
+      - Ledger
+      summary: List my ledger entries (double-entry, immutable)
+      operationId: listMyLedgerEntries
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Since'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - $ref: '#/components/parameters/Filter'
+      responses:
+        '200':
+          description: Ledger entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerEntryList'
+              examples:
+                page:
+                  value:
+                    data:
+                    - id: led_01HINV001
+                      txId: tx_01HINV001
+                      asset: STAR
+                      amount: -50
+                      side: debit
+                      account: user:018fb001-3b8b-7a76-9b7e-162ac5a3b8c2
+                      counterAccount: hold:hold_01PAY
+                      refType: hold_authorize
+                      refId: hold_01PAY
+                      occurredAt: '2025-10-09T14:20:00+07:00'
+                    - id: led_01HINV002
+                      txId: tx_01HINV001
+                      asset: STAR
+                      amount: 50
+                      side: credit
+                      account: hold:hold_01PAY
+                      counterAccount: user:018fb001-3b8b-7a76-9b7e-162ac5a3b8c2
+                      refType: hold_authorize
+                      refId: hold_01PAY
+                      occurredAt: '2025-10-09T14:20:00+07:00'
+                    nextCursor: c3RhdGU6MQ==
+                    total: 2
+  /v1/holds:
+    get:
+      tags:
+      - Holds
+      summary: List holds (authorizations)
+      operationId: listHolds
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Since'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - $ref: '#/components/parameters/Filter'
+      responses:
+        '200':
+          description: Holds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HoldList'
+              examples:
+                ok:
+                  value:
+                    data:
+                    - id: hold_01PAY
+                      userId: 018fb001-3b8b-7a76-9b7e-162ac5a3b8c2
+                      asset: STAR
+                      amount: 50
+                      state: authorized
+                      reason: matchmaking_stake
+                      expiresAt: '2025-10-09T10:45:00+07:00'
+                      createdAt: '2025-10-09T14:20:00+07:00'
+                      updatedAt: '2025-10-09T14:20:00+07:00'
+                    nextCursor: null
+                    total: 1
+    post:
+      tags:
+      - Holds
+      summary: Create a hold (authorization)
+      operationId: createHold
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HoldCreate'
+            examples:
+              auth:
+                value:
+                  userId: 018fb001-3b8b-7a76-9b7e-162ac5a3b8c2
+                  asset: STAR
+                  amount: 50
+                  reason: matchmaking_stake
+                  ttlSeconds: 900
+      responses:
+        '201':
+          description: Hold authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HoldEnvelope'
+              examples:
+                created:
+                  value:
+                    data:
+                      id: hold_01PAY
+                      userId: 018fb001-3b8b-7a76-9b7e-162ac5a3b8c2
+                      asset: STAR
+                      amount: 50
+                      state: authorized
+                      reason: matchmaking_stake
+                      expiresAt: '2025-10-09T10:45:00+07:00'
+                      createdAt: '2025-10-09T14:20:00+07:00'
+                      updatedAt: '2025-10-09T14:20:00+07:00'
+                    nextCursor: null
+        '403':
+          description: Forbidden (KYC/role/limit gate)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict (existing active hold for same reason)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Validation error (insufficient balance, amount ladder)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/holds/{id}:
+    get:
+      tags:
+      - Holds
+      summary: Get a hold
+      operationId: getHold
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Hold
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HoldEnvelope'
+        '404':
+          description: Not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/holds/{id}/capture:
+    post:
+      tags:
+      - Holds
+      summary: Capture a hold to escrow/settlement
+      operationId: captureHold
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                settlementRef:
+                  type: string
+                  description: Match or order id for reconciliation
+      responses:
+        '201':
+          description: Captured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementEnvelope'
+              examples:
+                captured:
+                  value:
+                    data:
+                      id: set_01PHCAP
+                      type: capture
+                      asset: STAR
+                      amount: 50
+                      state: captured
+                      holdId: hold_01PAY
+                      settlementRef: match_01ROOM
+                      createdAt: '2025-10-09T14:20:00+07:00'
+                      updatedAt: '2025-10-09T14:20:00+07:00'
+                    nextCursor: null
+        '409':
+          description: Hold not in authorized state / already captured
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/holds/{id}/release:
+    post:
+      tags:
+      - Holds
+      summary: Release a hold back to balance
+      operationId: releaseHold
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Released
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementEnvelope'
+        '409':
+          description: Hold already captured or released
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/transfers:
+    post:
+      tags:
+      - Transfers & Settlements
+      summary: Internal transfer (user↔user, treasury, escrow)
+      operationId: createTransfer
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferCreate'
+      responses:
+        '201':
+          description: Transfer created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferEnvelope'
+        '422':
+          description: Validation error / insufficient funds
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/settlements:
+    post:
+      tags:
+      - Transfers & Settlements
+      summary: Create settlement for a match/order
+      operationId: createSettlement
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettlementCreate'
+      responses:
+        '201':
+          description: Settlement created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementEnvelope'
+        '409':
+          description: Duplicate settlement for same ref
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/settlements/{id}/refund:
+    post:
+      tags:
+      - Transfers & Settlements
+      summary: Refund or void a settlement
+      operationId: refundSettlement
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundCreate'
+      responses:
+        '201':
+          description: Refund created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementEnvelope'
+        '409':
+          description: Already refunded / not refundable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/deposits:
+    get:
+      tags:
+      - Deposits
+      summary: List deposits
+      operationId: listDeposits
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Since'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - $ref: '#/components/parameters/Filter'
+      responses:
+        '200':
+          description: Deposits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositList'
+    post:
+      tags:
+      - Deposits
+      summary: Create deposit intent (on-chain or fiat)
+      operationId: createDeposit
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepositCreate'
+      responses:
+        '201':
+          description: Deposit intent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositEnvelope'
+  /v1/withdrawals:
+    get:
+      tags:
+      - Withdrawals
+      summary: List withdrawals
+      operationId: listWithdrawals
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Since'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - $ref: '#/components/parameters/Filter'
+      responses:
+        '200':
+          description: Withdrawals
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalList'
+    post:
+      tags:
+      - Withdrawals
+      summary: Create withdrawal intent (on-chain or fiat)
+      operationId: createWithdrawal
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawalCreate'
+      responses:
+        '201':
+          description: Withdrawal intent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalEnvelope'
+        '403':
+          description: Exceeds limits / compliance block
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/withdrawals/{id}/cancel:
+    post:
+      tags:
+      - Withdrawals
+      summary: Cancel a pending withdrawal
+      operationId: cancelWithdrawal
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Cancellation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalEnvelope'
+        '409':
+          description: Not cancelable in current state
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /v1/invoices:
+    get:
+      tags:
+      - Invoices & Quotas
+      summary: List invoices and overage charges
+      operationId: listInvoices
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Since'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - $ref: '#/components/parameters/Filter'
+      responses:
+        '200':
+          description: Invoices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceList'
+  /v1/quotas-limits:
+    get:
+      tags:
+      - Invoices & Quotas
+      - Compliance & Limits
+      summary: Get my quotas and compliance limits
+      operationId: getQuotasLimits
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Quotas & limits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaLimitsEnvelope'
+  /v1/compliance/checks:
+    post:
+      tags:
+      - Compliance & Limits
+      summary: Run a pre-transaction compliance check (KYC tier, denylist, risk)
+      operationId: runComplianceCheck
+      parameters:
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComplianceCheckCreate'
+      responses:
+        '200':
+          description: Check verdict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceCheckEnvelope'
+        '403':
+          description: Blocked
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    webhookHMAC:
+      type: apiKey
+      in: header
+      name: X-Fuze-Signature
+      description: 'HMAC-SHA256 signature header, format: t=<unix>,v1=<hex>, using
+        shared secret'
+  headers:
+    Retry-After:
+      description: Seconds until retry
+      schema:
+        type: integer
+  parameters:
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Idempotency key for safely retrying mutating requests. Responses
+        must be byte-identical within TTL.
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type:
+        - string
+        - 'null'
+    Since:
+      name: since
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+    Sort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        example: -createdAt
+    Q:
+      name: q
+      in: query
+      required: false
+      schema:
+        type: string
+    Filter:
+      name: filter
+      in: query
+      required: false
+      style: deepObject
+      explode: true
+      schema:
+        type: object
+        additionalProperties: true
+  schemas:
+    ProblemDetails:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        traceId:
+          type: string
+      required:
+      - code
+      - message
+      - traceId
+    Wallet:
+      type: object
+      properties:
+        userId:
+          type: string
+        balances:
+          type: array
+          items:
+            type: object
+            properties:
+              asset:
+                type: string
+              free:
+                type: number
+              locked:
+                type: number
+        limits:
+          type: object
+          properties:
+            dailyWithdrawUsd:
+              type: number
+            remainingWithdrawUsd:
+              type: number
+            tier:
+              type: string
+        updatedAt:
+          type: string
+          format: date-time
+      x-db:
+        engine: postgresql
+        table: payhub_wallets
+        pk: uuidv7
+    WalletEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Wallet'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    LedgerEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        txId:
+          type: string
+        asset:
+          type: string
+        amount:
+          type: number
+        side:
+          type: string
+          enum:
+          - debit
+          - credit
+        account:
+          type: string
+        counterAccount:
+          type: string
+        refType:
+          type: string
+        refId:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+      x-db:
+        engine: postgresql
+        table: payhub_ledger_entries
+        pk: uuidv7
+    LedgerEntryList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LedgerEntry'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type:
+          - integer
+          - 'null'
+    HoldCreate:
+      type: object
+      properties:
+        userId:
+          type: string
+        asset:
+          type: string
+          example: STAR
+        amount:
+          type: number
+        reason:
+          type: string
+          example: matchmaking_stake
+        ttlSeconds:
+          type: integer
+          example: 900
+    Hold:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        asset:
+          type: string
+        amount:
+          type: number
+        state:
+          type: string
+          enum:
+          - authorized
+          - captured
+          - released
+          - expired
+        reason:
+          type: string
+        expiresAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      x-db:
+        engine: postgresql
+        table: payhub_holds
+        pk: uuidv7
+    HoldEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Hold'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    HoldList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Hold'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type:
+          - integer
+          - 'null'
+    TransferCreate:
+      type: object
+      properties:
+        fromAccount:
+          type: string
+          example: user:018fb001-...
+        toAccount:
+          type: string
+          example: treasury
+        asset:
+          type: string
+          example: STAR
+        amount:
+          type: number
+          example: 50
+        reason:
+          type: string
+          example: tournament_fee
+    Transfer:
+      type: object
+      properties:
+        id:
+          type: string
+        asset:
+          type: string
+        amount:
+          type: number
+        fromAccount:
+          type: string
+        toAccount:
+          type: string
+        state:
+          type: string
+          enum:
+          - created
+          - posted
+          - failed
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      x-db:
+        engine: postgresql
+        table: payhub_transfers
+        pk: uuidv7
+    TransferEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Transfer'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    SettlementCreate:
+      type: object
+      properties:
+        settlementRef:
+          type: string
+          description: match or order id
+        asset:
+          type: string
+        amount:
+          type: number
+        payerAccount:
+          type: string
+          example: hold:hold_01PAY
+        payeeAccount:
+          type: string
+          example: user:018f...
+        type:
+          type: string
+          enum:
+          - capture
+          - payout
+    RefundCreate:
+      type: object
+      properties:
+        reason:
+          type: string
+          enum:
+          - void
+          - refund
+          - confiscate
+        amount:
+          type:
+          - number
+          - 'null'
+    Settlement:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+          - capture
+          - payout
+          - refund
+        asset:
+          type: string
+        amount:
+          type: number
+        state:
+          type: string
+          enum:
+          - created
+          - captured
+          - refunded
+          - failed
+        holdId:
+          type:
+          - string
+          - 'null'
+        settlementRef:
+          type:
+          - string
+          - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      x-db:
+        engine: postgresql
+        table: payhub_settlements
+        pk: uuidv7
+    SettlementEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Settlement'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    DepositCreate:
+      type: object
+      properties:
+        method:
+          type: string
+          enum:
+          - onchain
+          - fiat
+        asset:
+          type: string
+          example: USDT
+        amount:
+          type: number
+          example: 100
+        chainId:
+          type:
+          - string
+          - 'null'
+          example: eip155:1
+    Deposit:
+      type: object
+      properties:
+        id:
+          type: string
+        method:
+          type: string
+        asset:
+          type: string
+        amount:
+          type: number
+        state:
+          type: string
+          enum:
+          - pending
+          - completed
+          - failed
+          - canceled
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      x-db:
+        engine: postgresql
+        table: payhub_deposits
+        pk: uuidv7
+    DepositEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Deposit'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    DepositList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Deposit'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type:
+          - integer
+          - 'null'
+    WithdrawalCreate:
+      type: object
+      properties:
+        method:
+          type: string
+          enum:
+          - onchain
+          - fiat
+        asset:
+          type: string
+          example: USDT
+        amount:
+          type: number
+          example: 100
+        destination:
+          type: string
+          example: eip155:1:0xabc... or bank:XXXX
+    Withdrawal:
+      type: object
+      properties:
+        id:
+          type: string
+        method:
+          type: string
+        asset:
+          type: string
+        amount:
+          type: number
+        fee:
+          type: number
+        state:
+          type: string
+          enum:
+          - pending
+          - submitting
+          - completed
+          - failed
+          - canceled
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      x-db:
+        engine: postgresql
+        table: payhub_withdrawals
+        pk: uuidv7
+    WithdrawalEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Withdrawal'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    WithdrawalList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Withdrawal'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type:
+          - integer
+          - 'null'
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+          example: USDT
+        status:
+          type: string
+          enum:
+          - unpaid
+          - paid
+          - overdue
+        issuedAt:
+          type: string
+          format: date-time
+      x-db:
+        engine: postgresql
+        table: payhub_invoices
+        pk: uuidv7
+    InvoiceList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invoice'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type:
+          - integer
+          - 'null'
+    QuotaLimits:
+      type: object
+      properties:
+        quotas:
+          type: object
+          additionalProperties: true
+        limits:
+          type: object
+          additionalProperties: true
+        refreshedAt:
+          type: string
+          format: date-time
+    QuotaLimitsEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/QuotaLimits'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    ComplianceCheckCreate:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum:
+          - deposit
+          - withdrawal
+          - transfer
+          - settlement
+        asset:
+          type: string
+        amount:
+          type: number
+        destination:
+          type:
+          - string
+          - 'null'
+    ComplianceVerdict:
+      type: object
+      properties:
+        verdict:
+          type: string
+          enum:
+          - ok
+          - risky
+          - blocked
+        reasons:
+          type: array
+          items:
+            type: string
+        evaluatedAt:
+          type: string
+          format: date-time
+    ComplianceCheckEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/ComplianceVerdict'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+webhooks:
+  payhub.hold.expired@v1:
+    post:
+      summary: Hold expired (auto-release)
+      security:
+      - webhookHMAC: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                holdId:
+                  type: string
+                userId:
+                  type: string
+                expiredAt:
+                  type: string
+                  format: date-time
+      responses:
+        '204':
+          description: Acknowledge
+  payhub.settlement.completed@v1:
+    post:
+      summary: Settlement completed (capture/refund)
+      security:
+      - webhookHMAC: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                settlementId:
+                  type: string
+                type:
+                  type: string
+                amount:
+                  type: number
+                asset:
+                  type: string
+                occurredAt:
+                  type: string
+                  format: date-time
+      responses:
+        '204':
+          description: Acknowledge
+  payhub.withdrawal.status@v1:
+    post:
+      summary: Withdrawal status update
+      security:
+      - webhookHMAC: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                withdrawalId:
+                  type: string
+                state:
+                  type: string
+                txHash:
+                  type:
+                  - string
+                  - 'null'
+                occurredAt:
+                  type: string
+                  format: date-time
+      responses:
+        '204':
+          description: Acknowledge
+  payhub.invoice.issued@v1:
+    post:
+      summary: Invoice issued (overage/fee)
+      security:
+      - webhookHMAC: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                invoiceId:
+                  type: string
+                amount:
+                  type: number
+                currency:
+                  type: string
+                issuedAt:
+                  type: string
+                  format: date-time
+      responses:
+        '204':
+          description: Acknowledge
+x-queues:
+  engine: redis@7 + bullmq
+  queues:
+  - name: hold-expiry
+    dlq: hold-expiry-dlq
+    retry: fixed
+    maxAttempts: 1
+  - name: settlement-post
+    dlq: settlement-post-dlq
+    retry: exponential
+    maxAttempts: 6
+  - name: withdrawal-exec
+    dlq: withdrawal-exec-dlq
+    retry: exponential
+    maxAttempts: 6
+  - name: deposit-reconcile
+    dlq: deposit-reconcile-dlq
+    retry: exponential
+    maxAttempts: 6
+  - name: invoice-issue
+    dlq: invoice-issue-dlq
+    retry: exponential
+    maxAttempts: 6
+  - name: webhook-delivery
+    dlq: webhook-delivery-dlq
+    retry: exponential
+    maxAttempts: 6
+x-jobs:
+- name: holds-expire-sweeper
+  schedule: '*/1 * * * *'
+- name: reconcile-deposits
+  schedule: '*/2 * * * *'
+- name: execute-withdrawals
+  schedule: '*/2 * * * *'
+- name: settlement-dispatch
+  schedule: '*/1 * * * *'
+- name: invoice-issuer
+  schedule: 0 * * * *
