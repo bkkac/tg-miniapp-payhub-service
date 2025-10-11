@@ -1,0 +1,682 @@
+{
+  "project": "tg-miniapp-payhub-service",
+  "layout": {
+    "folders": [
+      "src/api",
+      "src/schemas",
+      "src/tests",
+      "src/clients",
+      "src/middlewares",
+      "src/errors",
+      "src/config",
+      "migrations"
+    ],
+    "files": [
+      "src/api/Compliance & Limits/runComplianceCheck.ts",
+      "src/api/Deposits/createDeposit.ts",
+      "src/api/Deposits/listDeposits.ts",
+      "src/api/Holds/captureHold.ts",
+      "src/api/Holds/createHold.ts",
+      "src/api/Holds/getHold.ts",
+      "src/api/Holds/listHolds.ts",
+      "src/api/Holds/releaseHold.ts",
+      "src/api/Invoices & Quotas/getQuotasLimits.ts",
+      "src/api/Invoices & Quotas/listInvoices.ts",
+      "src/api/Ledger/listMyLedgerEntries.ts",
+      "src/api/Transfers & Settlements/createSettlement.ts",
+      "src/api/Transfers & Settlements/createTransfer.ts",
+      "src/api/Transfers & Settlements/refundSettlement.ts",
+      "src/api/Wallets/getMyWallet.ts",
+      "src/api/Withdrawals/cancelWithdrawal.ts",
+      "src/api/Withdrawals/createWithdrawal.ts",
+      "src/api/Withdrawals/listWithdrawals.ts"
+    ]
+  },
+  "placeholders": [
+    {
+      "file": "src/api/Compliance & Limits/runComplianceCheck.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/compliance/checks",
+          "operationId": "runComplianceCheck",
+          "tags": [
+            "Compliance & Limits"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Deposits/createDeposit.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/deposits",
+          "operationId": "createDeposit",
+          "tags": [
+            "Deposits"
+          ],
+          "responses": [
+            "201",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Deposits/listDeposits.ts",
+      "operations": [
+        {
+          "method": "GET",
+          "path": "/v1/deposits",
+          "operationId": "listDeposits",
+          "tags": [
+            "Deposits"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Holds/captureHold.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/holds/{id}/capture",
+          "operationId": "captureHold",
+          "tags": [
+            "Holds"
+          ],
+          "responses": [
+            "201",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Holds/createHold.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/holds",
+          "operationId": "createHold",
+          "tags": [
+            "Holds"
+          ],
+          "responses": [
+            "201",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Holds/getHold.ts",
+      "operations": [
+        {
+          "method": "GET",
+          "path": "/v1/holds/{id}",
+          "operationId": "getHold",
+          "tags": [
+            "Holds"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Holds/listHolds.ts",
+      "operations": [
+        {
+          "method": "GET",
+          "path": "/v1/holds",
+          "operationId": "listHolds",
+          "tags": [
+            "Holds"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Holds/releaseHold.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/holds/{id}/release",
+          "operationId": "releaseHold",
+          "tags": [
+            "Holds"
+          ],
+          "responses": [
+            "201",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Invoices & Quotas/getQuotasLimits.ts",
+      "operations": [
+        {
+          "method": "GET",
+          "path": "/v1/quotas-limits",
+          "operationId": "getQuotasLimits",
+          "tags": [
+            "Invoices & Quotas",
+            "Compliance & Limits"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Invoices & Quotas/listInvoices.ts",
+      "operations": [
+        {
+          "method": "GET",
+          "path": "/v1/invoices",
+          "operationId": "listInvoices",
+          "tags": [
+            "Invoices & Quotas"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Ledger/listMyLedgerEntries.ts",
+      "operations": [
+        {
+          "method": "GET",
+          "path": "/v1/wallets/me/ledger-entries",
+          "operationId": "listMyLedgerEntries",
+          "tags": [
+            "Ledger"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Transfers & Settlements/createSettlement.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/settlements",
+          "operationId": "createSettlement",
+          "tags": [
+            "Transfers & Settlements"
+          ],
+          "responses": [
+            "201",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Transfers & Settlements/createTransfer.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/transfers",
+          "operationId": "createTransfer",
+          "tags": [
+            "Transfers & Settlements"
+          ],
+          "responses": [
+            "201",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Transfers & Settlements/refundSettlement.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/settlements/{id}/refund",
+          "operationId": "refundSettlement",
+          "tags": [
+            "Transfers & Settlements"
+          ],
+          "responses": [
+            "201",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Wallets/getMyWallet.ts",
+      "operations": [
+        {
+          "method": "GET",
+          "path": "/v1/wallets/me",
+          "operationId": "getMyWallet",
+          "tags": [
+            "Wallets"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Withdrawals/cancelWithdrawal.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/withdrawals/{id}/cancel",
+          "operationId": "cancelWithdrawal",
+          "tags": [
+            "Withdrawals"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Withdrawals/createWithdrawal.ts",
+      "operations": [
+        {
+          "method": "POST",
+          "path": "/v1/withdrawals",
+          "operationId": "createWithdrawal",
+          "tags": [
+            "Withdrawals"
+          ],
+          "responses": [
+            "201",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "src/api/Withdrawals/listWithdrawals.ts",
+      "operations": [
+        {
+          "method": "GET",
+          "path": "/v1/withdrawals",
+          "operationId": "listWithdrawals",
+          "tags": [
+            "Withdrawals"
+          ],
+          "responses": [
+            "200",
+            "400",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "429",
+            "500"
+          ]
+        }
+      ]
+    }
+  ],
+  "evidence": {
+    "acToTests": {
+      "AC-AML-SCREENING-CASE-MANAGEMENT-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-CREATE-DEPOSIT-INTENT-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-CREATE-HOLD-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-CREATE-WITHDRAWAL-REQUEST-KYCGATED-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-DAILY-CLOSE-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-DOUBLEENTRY-LEDGER-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-EXECUTE-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-EXPORTS-FOR-AUDIT-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-FEE-RULE-REPORTS-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-IDEMPOTENCY-RETRIES-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-ISSUE-PAY-INVOICES-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-LIMITS-VELOCITY-PROFILES-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-MANUAL-REFUNDS-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-PROVISION-ACCOUNT-BALANCES-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-QUOTE-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-SETTLE-RELEASE-01": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-SHA256": [
+        "src/tests/service.test.ts"
+      ],
+      "AC-TELEMETRY-SLOS-01": [
+        "src/tests/service.test.ts"
+      ]
+    },
+    "schemaToFile": {
+      "ComplianceCheckCreate": [
+        "src/schemas/schemas.ts"
+      ],
+      "ComplianceCheckEnvelope": [
+        "src/schemas/schemas.ts"
+      ],
+      "ComplianceVerdict": [
+        "src/schemas/schemas.ts"
+      ],
+      "Deposit": [
+        "src/schemas/schemas.ts"
+      ],
+      "DepositCreate": [
+        "src/schemas/schemas.ts"
+      ],
+      "DepositEnvelope": [
+        "src/schemas/schemas.ts"
+      ],
+      "DepositList": [
+        "src/schemas/schemas.ts"
+      ],
+      "Hold": [
+        "src/schemas/schemas.ts"
+      ],
+      "HoldCreate": [
+        "src/schemas/schemas.ts"
+      ],
+      "HoldEnvelope": [
+        "src/schemas/schemas.ts"
+      ],
+      "HoldList": [
+        "src/schemas/schemas.ts"
+      ],
+      "Invoice": [
+        "src/schemas/schemas.ts"
+      ],
+      "InvoiceList": [
+        "src/schemas/schemas.ts"
+      ],
+      "LedgerEntry": [
+        "src/schemas/schemas.ts"
+      ],
+      "LedgerEntryList": [
+        "src/schemas/schemas.ts"
+      ],
+      "ProblemDetails": [
+        "src/schemas/schemas.ts"
+      ],
+      "QuotaLimits": [
+        "src/schemas/schemas.ts"
+      ],
+      "QuotaLimitsEnvelope": [
+        "src/schemas/schemas.ts"
+      ],
+      "RefundCreate": [
+        "src/schemas/schemas.ts"
+      ],
+      "Settlement": [
+        "src/schemas/schemas.ts"
+      ],
+      "SettlementCreate": [
+        "src/schemas/schemas.ts"
+      ],
+      "SettlementEnvelope": [
+        "src/schemas/schemas.ts"
+      ],
+      "Transfer": [
+        "src/schemas/schemas.ts"
+      ],
+      "TransferCreate": [
+        "src/schemas/schemas.ts"
+      ],
+      "TransferEnvelope": [
+        "src/schemas/schemas.ts"
+      ],
+      "Wallet": [
+        "src/schemas/schemas.ts"
+      ],
+      "WalletEnvelope": [
+        "src/schemas/schemas.ts"
+      ],
+      "Withdrawal": [
+        "src/schemas/schemas.ts"
+      ],
+      "WithdrawalCreate": [
+        "src/schemas/schemas.ts"
+      ],
+      "WithdrawalEnvelope": [
+        "src/schemas/schemas.ts"
+      ],
+      "WithdrawalList": [
+        "src/schemas/schemas.ts"
+      ]
+    },
+    "operationsToFiles": {
+      "POST /v1/compliance/checks": [
+        "src/api/Compliance & Limits/runComplianceCheck.ts"
+      ],
+      "GET /v1/deposits": [
+        "src/api/Deposits/listDeposits.ts"
+      ],
+      "POST /v1/deposits": [
+        "src/api/Deposits/createDeposit.ts"
+      ],
+      "GET /v1/holds": [
+        "src/api/Holds/listHolds.ts"
+      ],
+      "POST /v1/holds": [
+        "src/api/Holds/createHold.ts"
+      ],
+      "GET /v1/holds/{id}": [
+        "src/api/Holds/getHold.ts"
+      ],
+      "POST /v1/holds/{id}/capture": [
+        "src/api/Holds/captureHold.ts"
+      ],
+      "POST /v1/holds/{id}/release": [
+        "src/api/Holds/releaseHold.ts"
+      ],
+      "GET /v1/invoices": [
+        "src/api/Invoices & Quotas/listInvoices.ts"
+      ],
+      "GET /v1/quotas-limits": [
+        "src/api/Invoices & Quotas/getQuotasLimits.ts"
+      ],
+      "GET /v1/wallets/me/ledger-entries": [
+        "src/api/Ledger/listMyLedgerEntries.ts"
+      ],
+      "POST /v1/settlements": [
+        "src/api/Transfers & Settlements/createSettlement.ts"
+      ],
+      "POST /v1/settlements/{id}/refund": [
+        "src/api/Transfers & Settlements/refundSettlement.ts"
+      ],
+      "POST /v1/transfers": [
+        "src/api/Transfers & Settlements/createTransfer.ts"
+      ],
+      "GET /v1/wallets/me": [
+        "src/api/Wallets/getMyWallet.ts"
+      ],
+      "GET /v1/withdrawals": [
+        "src/api/Withdrawals/listWithdrawals.ts"
+      ],
+      "POST /v1/withdrawals": [
+        "src/api/Withdrawals/createWithdrawal.ts"
+      ],
+      "POST /v1/withdrawals/{id}/cancel": [
+        "src/api/Withdrawals/cancelWithdrawal.ts"
+      ]
+    }
+  },
+  "limitations": [
+    "Unhandled schema type fell back to z.any()"
+  ]
+}
